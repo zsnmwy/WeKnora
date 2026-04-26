@@ -171,8 +171,8 @@
                   >
                     <div class="chunk-item-meta">
                       <span class="chunk-index">#{{ chunk.chunk_index }}</span>
-                      <span :class="['match-badge', chunk.match_type === 'vector' ? 'vector' : 'keyword']">
-                        {{ chunk.match_type === 'vector' ? $t('knowledgeSearch.matchTypeVector') : $t('knowledgeSearch.matchTypeKeyword') }}
+                      <span :class="['match-badge', getMatchBadgeType(chunk.match_type)]">
+                        {{ getMatchBadgeLabel(chunk.match_type) }}
                       </span>
                       <span class="chunk-score">{{ (chunk.score * 100).toFixed(1) }}%</span>
                     </div>
@@ -449,6 +449,24 @@ const toggleChunkExpand = (gIdx: number, cIdx: number) => {
   } else {
     expandedChunks.add(key)
   }
+}
+
+const isVectorMatchType = (matchType: unknown): boolean => {
+  if (matchType === 'vector') return true
+  if (matchType === 'keyword') return false
+
+  const numeric = Number(matchType)
+  return Number.isFinite(numeric) && numeric === 0
+}
+
+const getMatchBadgeType = (matchType: unknown): 'vector' | 'keyword' => {
+  return isVectorMatchType(matchType) ? 'vector' : 'keyword'
+}
+
+const getMatchBadgeLabel = (matchType: unknown): string => {
+  return isVectorMatchType(matchType)
+    ? t('knowledgeSearch.matchTypeVector')
+    : t('knowledgeSearch.matchTypeKeyword')
 }
 
 const goToDetail = (group: FileGroup) => {

@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,6 +21,20 @@ const (
 	defaultMaxToks = 5000
 	defaultTemp    = float32(0.1)
 )
+
+func getVLMTimeout() time.Duration {
+	timeoutStr := strings.TrimSpace(os.Getenv("WEKNORA_VLM_TIMEOUT_SECONDS"))
+	if timeoutStr == "" {
+		return defaultTimeout
+	}
+
+	timeoutSeconds, err := strconv.Atoi(timeoutStr)
+	if err != nil || timeoutSeconds <= 0 {
+		return defaultTimeout
+	}
+
+	return time.Duration(timeoutSeconds) * time.Second
+}
 
 // RemoteAPIVLM implements VLM via an OpenAI-compatible chat completions API.
 type RemoteAPIVLM struct {
@@ -54,7 +70,7 @@ func NewRemoteAPIVLM(config *Config) (*RemoteAPIVLM, error) {
 			apiCfg.BaseURL = config.BaseURL
 		}
 	}
-	httpClient := &http.Client{Timeout: defaultTimeout}
+	httpClient := &http.Client{Timeout: getVLMTimeout()}
 
 	// 注入用户自定义 HTTP header（类似 OpenAI Python SDK 的 extra_headers）
 	if len(config.CustomHeaders) > 0 {

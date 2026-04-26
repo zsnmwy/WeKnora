@@ -1196,6 +1196,8 @@ func (t *KnowledgeSearchTool) formatOutput(
 		t.seenChunks[result.ID] = true
 		t.seenMu.Unlock()
 
+		enrichedContent := t.getEnrichedPassage(ctx, result.SearchResult)
+
 		if seen {
 			// Compact rendering for chunks we already returned in a previous
 			// knowledge_search call during this session. The model has the
@@ -1225,10 +1227,10 @@ func (t *KnowledgeSearchTool) formatOutput(
 				result.Score,
 				xmlEscape(result.SourceQuery),
 			))
-			if snippet := extractSnippetForQueries(result.Content, queries); snippet != "" {
+			if snippet := extractSnippetForQueries(enrichedContent, queries); snippet != "" {
 				ob.WriteString(fmt.Sprintf("<match_snippet>%s</match_snippet>\n", xmlEscape(snippet)))
 			}
-			ob.WriteString(fmt.Sprintf("<content>%s</content>\n", result.Content))
+			ob.WriteString(fmt.Sprintf("<content>%s</content>\n", xmlEscape(enrichedContent)))
 
 			if result.ImageInfo != "" {
 				var imageInfos []types.ImageInfo
@@ -1270,7 +1272,7 @@ func (t *KnowledgeSearchTool) formatOutput(
 		formattedResults = append(formattedResults, map[string]interface{}{
 			"result_index":        i + 1,
 			"chunk_id":            result.ID,
-			"content":             result.Content,
+			"content":             enrichedContent,
 			"knowledge_id":        result.KnowledgeID,
 			"knowledge_title":     result.KnowledgeTitle,
 			"match_type":          result.MatchType,

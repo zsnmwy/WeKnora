@@ -1,5 +1,6 @@
 import logging
 import os
+import posixpath
 import re
 import tempfile
 import threading
@@ -10,6 +11,8 @@ from dataclasses import dataclass, field
 from io import BytesIO
 from multiprocessing import Manager
 from typing import Any, Dict, List, Optional, Tuple
+
+import pandas as pd
 
 
 # patch from https://github.com/python-openxml/python-docx/issues/1105#issuecomment-1298075246
@@ -1353,6 +1356,7 @@ def _extract_page_content_in_process(
     processed_paragraphs = 0
     paragraphs_with_text = 0
     paragraphs_with_images = 0
+    paragraphs_with_embedded_sheets = 0
 
     for para_idx in paragraphs:
         if para_idx >= len(doc.paragraphs):
@@ -1371,6 +1375,15 @@ def _extract_page_content_in_process(
             cleaned_text = re.sub(r"\u3000", " ", text).strip()
             current_text += cleaned_text + "\n"
             paragraphs_with_text += 1
+
+        embedded_sheet_text = _extract_embedded_spreadsheet_text_in_process(
+            logger, doc, paragraph, page_num, para_idx
+        )
+        if embedded_sheet_text:
+            if current_text and not current_text.endswith("\n"):
+                current_text += "\n"
+            current_text += embedded_sheet_text + "\n"
+            paragraphs_with_embedded_sheets += 1
 
         # Process image - if multimodal processing is enabled
         if enable_multimodal:
@@ -1401,6 +1414,7 @@ def _extract_page_content_in_process(
         f"[PID:{os.getpid()}] Page {page_num}: Completed content extraction, "
         f"found {paragraphs_with_text} paragraphs with text, "
         f"{paragraphs_with_images} with images, "
+        f"{paragraphs_with_embedded_sheets} with embedded spreadsheets, "
         f"total content items: {len(content_sequence)}"
     )
 
@@ -1530,3 +1544,101 @@ def _extract_image_in_process(
         logger.error(f"[PID:{os.getpid()}] Error processing image: {str(e)}")
         logger.error(f"[PID:{os.getpid()}] Error traceback: {traceback.format_exc()}")
         return None
+
+
+def _extract_embedded_spreadsheet_text_in_process(
+    logger, doc, paragraph, page_num, para_idx
+) -> str:
+    """Extract retrieval-friendly text from embedded Excel OLE objects in a paragraph."""
+    try:
+        ole_ids = paragraph._element.xpath(
+            ".//*[local-name()='OLEObject']/@*[local-name()='id']"
+        )
+        if not ole_ids:
+            return ""
+
+        blocks: List[str] = []
+        for rel_id in ole_ids:
+            related_part = doc.part.related_parts.get(rel_id)
+            if related_part is None:
+                logger.warning(
+                    f"[PID:{os.getpid()}] Page {page_num}: OLE rel {rel_id} not found in paragraph {para_idx}"
+                )
+                continue
+
+            partname = str(getattr(related_part, "partname", ""))
+            blob = getattr(related_part, "blob", None)
+            if not blob:
+                logger.warning(
+                    f"[PID:{os.getpid()}] Page {page_num}: OLE rel {rel_id} has no blob in paragraph {para_idx}"
+                )
+                continue
+
+            lower_name = partname.lower()
+            if not (lower_name.endswith(".xlsx") or lower_name.endswith(".xls")):
+                logger.info(
+                    f"[PID:{os.getpid()}] Page {page_num}: skipping non-spreadsheet OLE {partname or rel_id}"
+                )
+                continue
+
+            text = _parse_embedded_spreadsheet_blob(blob, partname)
+            if text:
+                blocks.append(text)
+                logger.info(
+                    f"[PID:{os.getpid()}] Page {page_num}: extracted embedded spreadsheet {partname or rel_id}"
+                )
+
+        return "\n\n".join(block for block in blocks if block)
+    except Exception as e:
+        logger.error(
+            f"[PID:{os.getpid()}] Page {page_num}: failed to extract embedded spreadsheet in paragraph {para_idx}: {str(e)}"
+        )
+        logger.error(f"[PID:{os.getpid()}] Traceback: {traceback.format_exc()}")
+        return ""
+
+
+def _parse_embedded_spreadsheet_blob(blob: bytes, partname: str) -> str:
+    """Convert embedded workbook bytes into retrieval-friendly text."""
+    workbook_name = posixpath.basename(partname) if partname else "embedded.xlsx"
+
+    try:
+        excel_file = pd.ExcelFile(BytesIO(blob))
+    except Exception:
+        logger.error("Failed to open embedded spreadsheet %s", workbook_name)
+        logger.error(traceback.format_exc())
+        return ""
+
+    blocks: List[str] = [f"[Embedded spreadsheet: {workbook_name}]"]
+    for sheet_name in excel_file.sheet_names:
+        try:
+            df = excel_file.parse(sheet_name=sheet_name)
+            df.dropna(how="all", inplace=True)
+        except Exception:
+            logger.error(
+                "Failed to parse embedded spreadsheet sheet %s/%s",
+                workbook_name,
+                sheet_name,
+            )
+            logger.error(traceback.format_exc())
+            continue
+
+        if df.empty:
+            continue
+
+        rows: List[str] = [f"Sheet: {sheet_name}"]
+        for _, row in df.iterrows():
+            pairs = []
+            for col, val in row.items():
+                if pd.notna(val):
+                    value = re.sub(r"\s+", " ", str(val)).strip()
+                    if value:
+                        pairs.append(f"{col}: {value}")
+            if pairs:
+                rows.append(", ".join(pairs))
+
+        if len(rows) > 1:
+            blocks.append("\n".join(rows))
+
+    if len(blocks) == 1:
+        return ""
+    return "\n\n".join(blocks)

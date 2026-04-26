@@ -177,6 +177,10 @@ func (s *knowledgeBaseService) buildRetrievalParams(
 	searchKBIDs []string,
 	matchCount int,
 ) ([]types.RetrieveParams, error) {
+	if kb != nil {
+		kb.EnsureDefaults()
+	}
+
 	currentTenantID := types.MustTenantIDFromContext(ctx)
 	var retrieveParams []types.RetrieveParams
 

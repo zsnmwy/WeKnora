@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -49,6 +50,96 @@ const (
 		"</instructions>"
 	vlmCaptionPrompt = "Provide a brief and concise description of the main content of the image in Chinese"
 )
+
+func getVLMRetryAttempts() int {
+	value := strings.TrimSpace(os.Getenv("WEKNORA_VLM_RETRY_ATTEMPTS"))
+	if value == "" {
+		return 3
+	}
+	attempts, err := strconv.Atoi(value)
+	if err != nil || attempts < 1 {
+		return 3
+	}
+	return attempts
+}
+
+func getVLMRetryDelay() time.Duration {
+	value := strings.TrimSpace(os.Getenv("WEKNORA_VLM_RETRY_DELAY_MS"))
+	if value == "" {
+		return 2 * time.Second
+	}
+	delayMs, err := strconv.Atoi(value)
+	if err != nil || delayMs < 0 {
+		return 2 * time.Second
+	}
+	return time.Duration(delayMs) * time.Millisecond
+}
+
+func isRetryableVLMError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	retryableMarkers := []string{
+		"timeout", "timed out", "deadline exceeded",
+		"429", "500", "502", "503", "504",
+		"temporarily unavailable", "connection reset", "connection refused",
+	}
+	for _, marker := range retryableMarkers {
+		if strings.Contains(message, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func sleepWithContext(ctx context.Context, delay time.Duration) error {
+	if delay <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func predictWithRetry(
+	ctx context.Context,
+	vlmModel vlm.VLM,
+	imgBytes []byte,
+	prompt string,
+	callType string,
+	imageURL string,
+) (string, error) {
+	attempts := getVLMRetryAttempts()
+	delay := getVLMRetryDelay()
+
+	var lastErr error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		result, err := vlmModel.Predict(ctx, [][]byte{imgBytes}, prompt)
+		if err == nil {
+			if attempt > 1 {
+				logger.Infof(ctx, "[ImageMultimodal] %s succeeded after retry %d/%d for %s",
+					callType, attempt, attempts, imageURL)
+			}
+			return result, nil
+		}
+		lastErr = err
+		if attempt == attempts || !isRetryableVLMError(err) {
+			break
+		}
+		logger.Warnf(ctx, "[ImageMultimodal] %s transient failure (attempt %d/%d) for %s: %v",
+			callType, attempt, attempts, imageURL, err)
+		if waitErr := sleepWithContext(ctx, delay*time.Duration(attempt)); waitErr != nil {
+			return "", waitErr
+		}
+	}
+	return "", lastErr
+}
 
 // ImageMultimodalService handles image:multimodal asynq tasks.
 // It reads images from storage (via FileService for provider:// URLs),
@@ -160,7 +251,7 @@ func (s *ImageMultimodalService) Handle(ctx context.Context, task *asynq.Task) e
 			logger.Infof(ctx, "[ImageMultimodal] Using scanned PDF prompt for OCR: %s", payload.ImageURL)
 		}
 		
-		ocrText, ocrErr := vlmModel.Predict(ctx, [][]byte{imgBytes}, prompt)
+		ocrText, ocrErr := predictWithRetry(ctx, vlmModel, imgBytes, prompt, "OCR", payload.ImageURL)
 		if ocrErr != nil {
 			logger.Warnf(ctx, "[ImageMultimodal] OCR failed for %s: %v", payload.ImageURL, ocrErr)
 		} else {
@@ -173,7 +264,7 @@ func (s *ImageMultimodalService) Handle(ctx context.Context, task *asynq.Task) e
 		}
 	}
 
-	caption, capErr := vlmModel.Predict(ctx, [][]byte{imgBytes}, vlmCaptionPrompt)
+	caption, capErr := predictWithRetry(ctx, vlmModel, imgBytes, vlmCaptionPrompt, "Caption", payload.ImageURL)
 	if capErr != nil {
 		logger.Warnf(ctx, "[ImageMultimodal] Caption failed for %s: %v", payload.ImageURL, capErr)
 	} else if caption != "" {
