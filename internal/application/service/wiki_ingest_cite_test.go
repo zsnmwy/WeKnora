@@ -164,6 +164,28 @@ func TestSplitChunksIntoCitationBatches_RespectsBudgetAndOrder(t *testing.T) {
 	}
 }
 
+func TestSplitChunksIntoCitationBatches_IncludesTableSemanticChunks(t *testing.T) {
+	chunks := []*types.Chunk{
+		{ID: "row-text", ChunkIndex: 0, Content: "row text", ChunkType: types.ChunkTypeText},
+		{ID: "table-summary", ChunkIndex: 1, Content: "summary", ChunkType: types.ChunkTypeTableSummary},
+		{ID: "table-columns", ChunkIndex: 2, Content: "columns", ChunkType: types.ChunkTypeTableColumn},
+		{ID: "ocr", ChunkIndex: 3, Content: "ocr", ChunkType: types.ChunkTypeImageOCR},
+	}
+
+	batches := splitChunksIntoCitationBatches(chunks)
+	if len(batches) != 1 {
+		t.Fatalf("expected one batch, got %d", len(batches))
+	}
+	seen := []string{}
+	for _, c := range batches[0].chunks {
+		seen = append(seen, c.ID)
+	}
+	want := []string{"row-text", "table-summary", "table-columns"}
+	if !equalStrings(seen, want) {
+		t.Fatalf("batch chunks = %v, want %v", seen, want)
+	}
+}
+
 // --- helpers ---
 
 func findBySlug(items []extractedItem, slug string) *extractedItem {

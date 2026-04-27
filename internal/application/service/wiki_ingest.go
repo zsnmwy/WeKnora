@@ -1131,6 +1131,33 @@ func reconstructEnrichedContent(
 	return searchutil.EnrichContentWithImageInfo(content, mergedImageInfo)
 }
 
+func reconstructSemanticSourceContent(
+	ctx context.Context,
+	chunkRepo interfaces.ChunkRepository,
+	tenantID uint64,
+	chunks []*types.Chunk,
+) string {
+	tableChunks := filterChunksByTypes(chunks, tableSemanticChunkTypes...)
+	if len(tableChunks) == 0 {
+		return reconstructEnrichedContent(ctx, chunkRepo, tenantID, chunks)
+	}
+
+	var sb strings.Builder
+	for _, c := range tableChunks {
+		if sb.Len() > 0 {
+			sb.WriteString("\n\n")
+		}
+		switch c.ChunkType {
+		case types.ChunkTypeTableSummary:
+			sb.WriteString("## 表格摘要\n")
+		case types.ChunkTypeTableColumn:
+			sb.WriteString("## 字段说明\n")
+		}
+		sb.WriteString(c.Content)
+	}
+	return sb.String()
+}
+
 // slugify creates a URL-friendly slug from a string
 func slugify(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))

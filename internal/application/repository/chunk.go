@@ -144,6 +144,37 @@ func (r *chunkRepository) ListChunksByKnowledgeID(
 	return chunks, nil
 }
 
+// ListChunksByKnowledgeIDAndTypes lists chunks for a knowledge ID filtered by chunk type.
+func (r *chunkRepository) ListChunksByKnowledgeIDAndTypes(
+	ctx context.Context,
+	tenantID uint64,
+	knowledgeID string,
+	chunkTypes []types.ChunkType,
+) ([]*types.Chunk, error) {
+	if len(chunkTypes) == 0 {
+		return []*types.Chunk{}, nil
+	}
+	includeDefaultText := false
+	for _, chunkType := range chunkTypes {
+		if chunkType == types.ChunkTypeText {
+			includeDefaultText = true
+			break
+		}
+	}
+	var chunks []*types.Chunk
+	query := r.db.WithContext(ctx).
+		Where("tenant_id = ? AND knowledge_id = ?", tenantID, knowledgeID)
+	if includeDefaultText {
+		query = query.Where("(chunk_type IN ? OR chunk_type = '')", chunkTypes)
+	} else {
+		query = query.Where("chunk_type IN ?", chunkTypes)
+	}
+	if err := query.Order("chunk_index ASC, start_at ASC").Find(&chunks).Error; err != nil {
+		return nil, err
+	}
+	return chunks, nil
+}
+
 // ListPagedChunksByKnowledgeID lists chunks for a knowledge ID with pagination
 func (r *chunkRepository) ListPagedChunksByKnowledgeID(
 	ctx context.Context,

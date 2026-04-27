@@ -69,19 +69,16 @@ func (s *KnowledgePostProcessService) Handle(ctx context.Context, task *asynq.Ta
 		return fmt.Errorf("get knowledge base %s: %w", payload.KnowledgeBaseID, err)
 	}
 
-	// 2. Fetch all chunks
-	chunks, err := s.chunkService.ListChunksByKnowledgeID(ctx, payload.KnowledgeID)
+	// 2. Fetch chunks needed by post-process pipelines. Text/image chunks
+	// drive summary/question generation, while table_summary/table_column
+	// chunks are the semantic source for spreadsheet graph/wiki extraction.
+	chunks, err := s.chunkService.ListChunksByKnowledgeIDAndTypes(ctx, payload.KnowledgeID, postProcessChunkTypes)
 	if err != nil {
 		return fmt.Errorf("list chunks for knowledge %s: %w", payload.KnowledgeID, err)
 	}
 
-	// Gather all text-like chunks (including newly added OCR and Caption from multimodal tasks)
-	var textChunks []*types.Chunk
-	for _, c := range chunks {
-		if c.ChunkType == types.ChunkTypeText || c.ChunkType == types.ChunkTypeImageOCR || c.ChunkType == types.ChunkTypeImageCaption {
-			textChunks = append(textChunks, c)
-		}
-	}
+	semanticSelection := selectSemanticSourceChunks(knowledge, chunks)
+	summarySourceChunks := selectSummarySourceChunks(semanticSelection, chunks)
 
 	// 3. Update ParseStatus to Completed
 	// (Except if it's already completed or if it was marked as failed/deleting, but we'll just set it to completed if it's processing)
@@ -90,7 +87,7 @@ func (s *KnowledgePostProcessService) Handle(ctx context.Context, task *asynq.Ta
 		knowledge.UpdatedAt = time.Now()
 
 		// Setup summary status
-		if len(textChunks) > 0 {
+		if len(summarySourceChunks) > 0 {
 			knowledge.SummaryStatus = types.SummaryStatusPending
 		} else {
 			knowledge.SummaryStatus = types.SummaryStatusNone
@@ -104,19 +101,23 @@ func (s *KnowledgePostProcessService) Handle(ctx context.Context, task *asynq.Ta
 	}
 
 	// 4. Spawn Summary and Question Tasks
-	if len(textChunks) > 0 {
+	if len(summarySourceChunks) > 0 {
 		s.enqueueSummaryGenerationTask(ctx, payload)
 		// Question generation only makes sense for RAG indexing (improves chunk recall).
 		// Skip when only Wiki/Graph is enabled without vector/keyword search.
-		if kb.NeedsEmbeddingModel() {
+		if kb.NeedsEmbeddingModel() && shouldGenerateQuestionsFromPostProcess(semanticSelection) {
 			s.enqueueQuestionGenerationIfEnabled(ctx, payload, kb)
 		}
 	}
 
 	// 5. Spawn Graph RAG Tasks — only when graph indexing is enabled in IndexingStrategy
 	if kb.IsGraphEnabled() {
-		logger.Infof(ctx, "[KnowledgePostProcess] Spawning Graph RAG extract tasks for %d text-like chunks", len(textChunks))
-		for _, chunk := range textChunks {
+		if semanticSelection.MissingTableSemantic {
+			logger.Warnf(ctx, "[KnowledgePostProcess] Spreadsheet knowledge %s has no table_summary/table_column chunks; skip graph extraction instead of scanning row-level text chunks", payload.KnowledgeID)
+		} else {
+			logger.Infof(ctx, "[KnowledgePostProcess] Spawning Graph RAG extract tasks for %d %s chunks", len(semanticSelection.Chunks), semanticSelection.Mode)
+		}
+		for _, chunk := range semanticSelection.Chunks {
 			err := NewChunkExtractTask(ctx, s.taskEnqueuer, payload.TenantID, chunk.ID, kb.SummaryModelID)
 			if err != nil {
 				logger.Errorf(ctx, "[KnowledgePostProcess] Failed to create chunk extract task for %s: %v", chunk.ID, err)
@@ -125,7 +126,7 @@ func (s *KnowledgePostProcessService) Handle(ctx context.Context, task *asynq.Ta
 	}
 
 	// 6. Spawn Wiki Ingest Task if wiki indexing is enabled in IndexingStrategy
-	if kb.IndexingStrategy.WikiEnabled && len(textChunks) > 0 {
+	if kb.IndexingStrategy.WikiEnabled && (len(summarySourceChunks) > 0 || len(semanticSelection.Chunks) > 0 || semanticSelection.MissingTableSemantic) {
 		EnqueueWikiIngest(ctx, s.taskEnqueuer, s.redisClient, payload.TenantID, payload.KnowledgeBaseID, payload.KnowledgeID)
 		logger.Infof(ctx, "[KnowledgePostProcess] Enqueued wiki ingest task for %s", payload.KnowledgeID)
 	}

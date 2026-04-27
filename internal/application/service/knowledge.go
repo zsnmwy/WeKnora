@@ -454,7 +454,10 @@ func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 	)
 
 	if slices.Contains([]string{"csv", "xlsx", "xls"}, getFileType(safeFilename)) {
-		NewDataTableSummaryTask(ctx, s.task, tenantID, knowledge.ID, kb.SummaryModelID, kb.EmbeddingModelID)
+		if err := NewDataTableSummaryTask(ctx, s.task, tenantID, knowledge.ID, kb.SummaryModelID, kb.EmbeddingModelID); err != nil {
+			logger.Warnf(ctx, "Failed to enqueue data table summary task for %s, falling back to knowledge post process: %v", knowledge.ID, err)
+			s.enqueueKnowledgePostProcessTask(ctx, knowledge, lang)
+		}
 	}
 
 	logger.Infof(ctx, "Knowledge from file created successfully, ID: %s", knowledge.ID)
@@ -1976,6 +1979,7 @@ func (s *knowledgeService) processChunks(ctx context.Context,
 				KnowledgeID:     knowledge.ID,
 				KnowledgeBaseID: knowledge.KnowledgeBaseID,
 				Content:         pc.Content,
+				ContentHash:     calculateStr(pc.Content),
 				ChunkIndex:      pc.Seq,
 				IsEnabled:       true,
 				CreatedAt:       time.Now(),
@@ -2015,6 +2019,7 @@ func (s *knowledgeService) processChunks(ctx context.Context,
 			KnowledgeID:     knowledge.ID,
 			KnowledgeBaseID: knowledge.KnowledgeBaseID,
 			Content:         chunkData.Content,
+			ContentHash:     calculateStr(chunkData.Content),
 			ChunkIndex:      int(chunkData.Seq),
 			IsEnabled:       true,
 			CreatedAt:       time.Now(),
@@ -2208,27 +2213,12 @@ func (s *knowledgeService) processChunks(ctx context.Context,
 	// Enqueue multimodal tasks for images (async, non-blocking)
 	if options.EnableMultimodel && len(options.StoredImages) > 0 {
 		s.enqueueImageMultimodalTasks(ctx, knowledge, kb, options.StoredImages, chunks, options.Metadata)
+	} else if isTableDocumentKnowledge(knowledge) {
+		logger.Infof(ctx, "Table knowledge %s will run post process after table summary chunks are created", knowledge.ID)
 	} else {
 		// If there are no multimodal tasks, enqueue the post process task immediately
 		lang, _ := types.LanguageFromContext(ctx)
-		postProcessPayload := types.KnowledgePostProcessPayload{
-			TenantID:        knowledge.TenantID,
-			KnowledgeID:     knowledge.ID,
-			KnowledgeBaseID: knowledge.KnowledgeBaseID,
-			Language:        lang,
-		}
-		langfuse.InjectTracing(ctx, &postProcessPayload)
-		payloadBytes, err := json.Marshal(postProcessPayload)
-		if err == nil {
-			task := asynq.NewTask(types.TypeKnowledgePostProcess, payloadBytes, asynq.Queue("default"), asynq.MaxRetry(3))
-			if _, err := s.task.Enqueue(task); err != nil {
-				logger.Errorf(ctx, "Failed to enqueue knowledge post process task: %v", err)
-			} else {
-				logger.Infof(ctx, "Enqueued knowledge post process task for %s", knowledge.ID)
-			}
-		} else {
-			logger.Errorf(ctx, "Failed to marshal knowledge post process payload: %v", err)
-		}
+		s.enqueueKnowledgePostProcessTask(ctx, knowledge, lang)
 	}
 
 	// Update tenant's storage usage
@@ -2237,6 +2227,31 @@ func (s *knowledgeService) processChunks(ctx context.Context,
 		logger.GetLogger(ctx).WithField("error", err).Errorf("processChunks update tenant storage used failed")
 	}
 	logger.GetLogger(ctx).Infof("processChunks successfully")
+}
+
+func (s *knowledgeService) enqueueKnowledgePostProcessTask(ctx context.Context, knowledge *types.Knowledge, lang string) {
+	if s.task == nil || knowledge == nil {
+		return
+	}
+
+	postProcessPayload := types.KnowledgePostProcessPayload{
+		TenantID:        knowledge.TenantID,
+		KnowledgeID:     knowledge.ID,
+		KnowledgeBaseID: knowledge.KnowledgeBaseID,
+		Language:        lang,
+	}
+	langfuse.InjectTracing(ctx, &postProcessPayload)
+	payloadBytes, err := json.Marshal(postProcessPayload)
+	if err != nil {
+		logger.Errorf(ctx, "Failed to marshal knowledge post process payload: %v", err)
+		return
+	}
+	task := asynq.NewTask(types.TypeKnowledgePostProcess, payloadBytes, asynq.Queue("critical"), asynq.MaxRetry(3))
+	if _, err := s.task.Enqueue(task); err != nil {
+		logger.Errorf(ctx, "Failed to enqueue knowledge post process task: %v", err)
+		return
+	}
+	logger.Infof(ctx, "Enqueued knowledge post process task for %s", knowledge.ID)
 }
 
 // defaultMaxInputChars is the default maximum characters used as input for summary generation.
@@ -2440,24 +2455,27 @@ func (s *knowledgeService) ProcessSummaryGeneration(ctx context.Context, t *asyn
 		}
 	}
 
-	// Get text chunks for this knowledge
-	chunks, err := s.chunkService.ListChunksByKnowledgeID(ctx, payload.KnowledgeID)
+	isTableDocument := isTableDocumentKnowledge(knowledge)
+
+	var chunks []*types.Chunk
+	if isTableDocument {
+		chunks, err = s.chunkService.ListChunksByKnowledgeIDAndTypes(ctx, payload.KnowledgeID, tableSemanticChunkTypes)
+	} else {
+		chunks, err = s.chunkService.ListChunksByKnowledgeID(ctx, payload.KnowledgeID)
+	}
 	if err != nil {
 		logger.Errorf(ctx, "Failed to get chunks: %v", err)
 		markSummaryFailed()
 		return nil
 	}
 
-	// Filter text chunks only
-	textChunks := make([]*types.Chunk, 0)
-	for _, chunk := range chunks {
-		if chunk.ChunkType == types.ChunkTypeText {
-			textChunks = append(textChunks, chunk)
-		}
+	summaryChunks := filterChunksByTypes(chunks, graphDefaultChunkTypes...)
+	if isTableDocument {
+		summaryChunks = filterChunksByTypes(chunks, tableSemanticChunkTypes...)
 	}
 
-	if len(textChunks) == 0 {
-		logger.Infof(ctx, "No text chunks found for knowledge: %s", payload.KnowledgeID)
+	if len(summaryChunks) == 0 {
+		logger.Infof(ctx, "No summary source chunks found for knowledge: %s", payload.KnowledgeID)
 		// Mark as completed since there's nothing to summarize
 		knowledge.SummaryStatus = types.SummaryStatusCompleted
 		knowledge.UpdatedAt = time.Now()
@@ -2466,8 +2484,8 @@ func (s *knowledgeService) ProcessSummaryGeneration(ctx context.Context, t *asyn
 	}
 
 	// Sort chunks by ChunkIndex for proper ordering
-	sort.Slice(textChunks, func(i, j int) bool {
-		return textChunks[i].ChunkIndex < textChunks[j].ChunkIndex
+	sort.Slice(summaryChunks, func(i, j int) bool {
+		return summaryChunks[i].ChunkIndex < summaryChunks[j].ChunkIndex
 	})
 
 	// Initialize chat model for summary
@@ -2479,12 +2497,12 @@ func (s *knowledgeService) ProcessSummaryGeneration(ctx context.Context, t *asyn
 	}
 
 	// Generate summary
-	summary, err := s.getSummary(ctx, chatModel, knowledge, textChunks)
+	summary, err := s.getSummary(ctx, chatModel, knowledge, summaryChunks)
 	if err != nil {
 		logger.Errorf(ctx, "Failed to generate summary for knowledge %s: %v", payload.KnowledgeID, err)
 		// Use first chunk content as fallback
-		if len(textChunks) > 0 {
-			summary = textChunks[0].Content
+		if len(summaryChunks) > 0 {
+			summary = summaryChunks[0].Content
 			if len(summary) > 500 {
 				// Use rune-based truncation to avoid cutting UTF-8 multi-byte characters
 				runes := []rune(summary)
@@ -2528,7 +2546,7 @@ func (s *knowledgeService) ProcessSummaryGeneration(ctx context.Context, t *asyn
 			StartAt:         0,
 			EndAt:           0,
 			ChunkType:       types.ChunkTypeSummary,
-			ParentChunkID:   textChunks[0].ID,
+			ParentChunkID:   summaryChunks[0].ID,
 		}
 
 		// Save summary chunk
@@ -2659,6 +2677,11 @@ func (s *knowledgeService) ProcessQuestionGeneration(ctx context.Context, t *asy
 	if err != nil {
 		exitStatus = "knowledge_not_found"
 		logger.Errorf(ctx, "Failed to get knowledge: %v", err)
+		return nil
+	}
+	if isTableDocumentKnowledge(knowledge) {
+		exitStatus = "table_document_skipped"
+		logger.Infof(ctx, "Skip question generation for table knowledge: %s", payload.KnowledgeID)
 		return nil
 	}
 
@@ -3227,7 +3250,10 @@ func (s *knowledgeService) ReparseKnowledge(ctx context.Context, knowledgeID str
 
 		// For data tables (csv, xlsx, xls), also enqueue summary task
 		if slices.Contains([]string{"csv", "xlsx", "xls"}, getFileType(existing.FileName)) {
-			NewDataTableSummaryTask(ctx, s.task, tenantID, existing.ID, kb.SummaryModelID, kb.EmbeddingModelID)
+			if err := NewDataTableSummaryTask(ctx, s.task, tenantID, existing.ID, kb.SummaryModelID, kb.EmbeddingModelID); err != nil {
+				logger.Warnf(ctx, "Failed to enqueue data table summary task for %s, falling back to knowledge post process: %v", existing.ID, err)
+				s.enqueueKnowledgePostProcessTask(ctx, existing, lang)
+			}
 		}
 
 		return existing, nil

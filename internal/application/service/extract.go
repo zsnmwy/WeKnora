@@ -102,7 +102,7 @@ func NewChunkExtractTask(
 	if err != nil {
 		return err
 	}
-	task := asynq.NewTask(types.TypeChunkExtract, payload, asynq.MaxRetry(3))
+	task := asynq.NewTask(types.TypeChunkExtract, payload, asynq.Queue("graph"), asynq.MaxRetry(3))
 	info, err := client.Enqueue(task)
 	if err != nil {
 		logger.Errorf(ctx, "failed to enqueue task: %v", err)
@@ -281,6 +281,7 @@ type DataTableSummaryService struct {
 	chunkService         interfaces.ChunkService
 	tenantService        interfaces.TenantService
 	retrieveEngine       interfaces.RetrieveEngineRegistry
+	taskEnqueuer         interfaces.TaskEnqueuer
 	sqlDB                *sql.DB
 }
 
@@ -293,6 +294,7 @@ func NewDataTableSummaryService(
 	chunkService interfaces.ChunkService,
 	tenantService interfaces.TenantService,
 	retrieveEngine interfaces.RetrieveEngineRegistry,
+	taskEnqueuer interfaces.TaskEnqueuer,
 	sqlDB *sql.DB,
 ) interfaces.TaskHandler {
 	return &DataTableSummaryService{
@@ -303,6 +305,7 @@ func NewDataTableSummaryService(
 		chunkService:         chunkService,
 		tenantService:        tenantService,
 		retrieveEngine:       retrieveEngine,
+		taskEnqueuer:         taskEnqueuer,
 		sqlDB:                sqlDB,
 	}
 }
@@ -326,12 +329,14 @@ func (s *DataTableSummaryService) Handle(ctx context.Context, t *asynq.Task) err
 	// 2. 准备所有必需的资源（知识、模型、引擎等）
 	resources, err := s.prepareResources(ctx, payload)
 	if err != nil {
+		s.enqueuePostProcessFallbackOnFinalAttempt(ctx, payload, nil, err)
 		return err
 	}
 
 	// 3. 加载表格数据并生成摘要
 	chunks, err := s.processTableData(ctx, resources)
 	if err != nil {
+		s.enqueuePostProcessFallbackOnFinalAttempt(ctx, payload, resources.knowledge, err)
 		return err
 	}
 
@@ -340,9 +345,57 @@ func (s *DataTableSummaryService) Handle(ctx context.Context, t *asynq.Task) err
 		s.cleanupOnFailure(ctx, resources, chunks, err)
 		return err
 	}
+	s.enqueueKnowledgePostProcess(ctx, resources.knowledge)
 
 	logger.Infof(ctx, "Table extraction completed for knowledge: %s", payload.KnowledgeID)
 	return nil
+}
+
+func (s *DataTableSummaryService) enqueuePostProcessFallbackOnFinalAttempt(
+	ctx context.Context,
+	payload DataTableSummaryPayload,
+	knowledge *types.Knowledge,
+	cause error,
+) {
+	retryCount, retryOK := asynq.GetRetryCount(ctx)
+	maxRetry, maxRetryOK := asynq.GetMaxRetry(ctx)
+	if !retryOK || !maxRetryOK || retryCount < maxRetry {
+		return
+	}
+	if knowledge == nil {
+		var err error
+		knowledge, err = s.knowledgeService.GetKnowledgeByID(ctx, payload.KnowledgeID)
+		if err != nil {
+			logger.Warnf(ctx, "failed to load table knowledge %s for post process fallback after final retry: %v", payload.KnowledgeID, err)
+			return
+		}
+	}
+	logger.Warnf(ctx, "table summary failed after final retry for knowledge %s, enqueueing post process fallback: %v", payload.KnowledgeID, cause)
+	s.enqueueKnowledgePostProcess(ctx, knowledge)
+}
+
+func (s *DataTableSummaryService) enqueueKnowledgePostProcess(ctx context.Context, knowledge *types.Knowledge) {
+	if s.taskEnqueuer == nil || knowledge == nil {
+		return
+	}
+
+	postProcessPayload := types.KnowledgePostProcessPayload{
+		TenantID:        knowledge.TenantID,
+		KnowledgeID:     knowledge.ID,
+		KnowledgeBaseID: knowledge.KnowledgeBaseID,
+	}
+	langfuse.InjectTracing(ctx, &postProcessPayload)
+	payloadBytes, err := json.Marshal(postProcessPayload)
+	if err != nil {
+		logger.Errorf(ctx, "failed to marshal table knowledge post process payload: %v", err)
+		return
+	}
+	task := asynq.NewTask(types.TypeKnowledgePostProcess, payloadBytes, asynq.Queue("critical"), asynq.MaxRetry(3))
+	if _, err := s.taskEnqueuer.Enqueue(task); err != nil {
+		logger.Errorf(ctx, "failed to enqueue table knowledge post process task: %v", err)
+		return
+	}
+	logger.Infof(ctx, "Enqueued table knowledge post process task for %s", knowledge.ID)
 }
 
 // extractionResources 封装提取过程所需的所有资源
@@ -371,6 +424,12 @@ func (s *DataTableSummaryService) prepareResources(ctx context.Context, payload 
 		return nil, fmt.Errorf("unsupported file type: %s", fileType)
 	}
 
+	kb, err := s.knowledgeBaseService.GetKnowledgeBaseByID(ctx, knowledge.KnowledgeBaseID)
+	if err != nil {
+		logger.Errorf(ctx, "failed to get knowledge base: %v", err)
+		return nil, err
+	}
+
 	// 获取租户信息
 	tenantInfo, err := s.tenantService.GetTenantByID(ctx, payload.TenantID)
 	if err != nil {
@@ -385,18 +444,24 @@ func (s *DataTableSummaryService) prepareResources(ctx context.Context, payload 
 		return nil, err
 	}
 
-	// 获取嵌入模型（用于向量化）
-	embeddingModel, err := s.modelService.GetEmbeddingModel(ctx, payload.EmbeddingModel)
-	if err != nil {
-		logger.Errorf(ctx, "failed to get embedding model: %v", err)
-		return nil, err
-	}
+	var embeddingModel embedding.Embedder
+	var retrieveEngine *retriever.CompositeRetrieveEngine
+	if kb.NeedsEmbeddingModel() {
+		// 获取嵌入模型（用于向量化）
+		embeddingModel, err = s.modelService.GetEmbeddingModel(ctx, payload.EmbeddingModel)
+		if err != nil {
+			logger.Errorf(ctx, "failed to get embedding model: %v", err)
+			return nil, err
+		}
 
-	// 获取检索引擎
-	retrieveEngine, err := retriever.NewCompositeRetrieveEngine(s.retrieveEngine, tenantInfo.GetEffectiveEngines())
-	if err != nil {
-		logger.Errorf(ctx, "failed to get retrieve engine: %v", err)
-		return nil, err
+		// 获取检索引擎
+		retrieveEngine, err = retriever.NewCompositeRetrieveEngine(s.retrieveEngine, tenantInfo.GetEffectiveEngines())
+		if err != nil {
+			logger.Errorf(ctx, "failed to get retrieve engine: %v", err)
+			return nil, err
+		}
+	} else {
+		logger.Infof(ctx, "Vector/keyword indexing disabled for KB %s, table semantic chunks will be stored without embeddings", knowledge.KnowledgeBaseID)
 	}
 
 	return &extractionResources{
@@ -510,6 +575,7 @@ func (s *DataTableSummaryService) buildChunks(resources *extractionResources, ta
 		KnowledgeID:     resources.knowledge.ID,
 		KnowledgeBaseID: resources.knowledge.KnowledgeBaseID,
 		Content:         tableDescription,
+		ContentHash:     calculateStr(tableDescription),
 		ChunkIndex:      0,
 		IsEnabled:       true,
 		ChunkType:       types.ChunkTypeTableSummary,
@@ -524,6 +590,7 @@ func (s *DataTableSummaryService) buildChunks(resources *extractionResources, ta
 		KnowledgeID:     resources.knowledge.ID,
 		KnowledgeBaseID: resources.knowledge.KnowledgeBaseID,
 		Content:         columnDescription,
+		ContentHash:     calculateStr(columnDescription),
 		ChunkIndex:      1,
 		IsEnabled:       true,
 		ChunkType:       types.ChunkTypeTableColumn,
@@ -546,6 +613,15 @@ func (s *DataTableSummaryService) indexToVectorDB(
 	engine *retriever.CompositeRetrieveEngine,
 	embedder embedding.Embedder,
 ) error {
+	if engine == nil || embedder == nil {
+		if err := s.chunkService.CreateChunks(ctx, chunks); err != nil {
+			logger.Errorf(ctx, "failed to create table semantic chunks: %v", err)
+			return err
+		}
+		logger.Infof(ctx, "Created %d table semantic chunks without vector indexing", len(chunks))
+		return nil
+	}
+
 	// 构建索引信息列表
 	indexInfoList := make([]*types.IndexInfo, 0, len(chunks))
 	for _, chunk := range chunks {
@@ -615,7 +691,7 @@ func (s *DataTableSummaryService) cleanupOnFailure(ctx context.Context, resource
 	}
 
 	// 删除对应的向量索引
-	if len(chunkIDs) > 0 {
+	if len(chunkIDs) > 0 && resources.retrieveEngine != nil && resources.embeddingModel != nil {
 		if err := resources.retrieveEngine.DeleteBySourceIDList(
 			ctx, chunkIDs, resources.embeddingModel.GetDimensions(), types.KnowledgeBaseTypeDocument,
 		); err != nil {

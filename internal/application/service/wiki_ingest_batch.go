@@ -440,7 +440,16 @@ func (s *wikiIngestService) mapOneDocument(
 		return nil, nil, nil
 	}
 
-	chunks, err := s.chunkRepo.ListChunksByKnowledgeID(ctx, payload.TenantID, knowledgeID)
+	knowledge, err := s.knowledgeSvc.GetKnowledgeByIDOnly(ctx, knowledgeID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("get knowledge: %w", err)
+	}
+	if knowledge == nil {
+		logger.Infof(ctx, "wiki ingest: knowledge %s not found, skip", knowledgeID)
+		return nil, nil, nil
+	}
+
+	chunks, err := s.chunkRepo.ListChunksByKnowledgeIDAndTypes(ctx, payload.TenantID, knowledgeID, postProcessChunkTypes)
 	if err != nil {
 		return nil, nil, fmt.Errorf("get chunks: %w", err)
 	}
@@ -449,16 +458,9 @@ func (s *wikiIngestService) mapOneDocument(
 		return nil, nil, nil
 	}
 
-	content := reconstructEnrichedContent(ctx, s.chunkRepo, payload.TenantID, chunks)
-	rawRuneCount := len([]rune(content))
-	if len([]rune(content)) > maxContentForWiki {
-		content = string([]rune(content)[:maxContentForWiki])
-	}
-	logger.Infof(ctx, "wiki ingest: doc %s chunks=%d content_len(raw=%d,truncated=%d)", knowledgeID, len(chunks), rawRuneCount, len([]rune(content)))
-
 	docTitle := knowledgeID
-	if kn, err := s.knowledgeSvc.GetKnowledgeByIDOnly(ctx, knowledgeID); err == nil && kn != nil && kn.Title != "" {
-		docTitle = kn.Title
+	if knowledge.Title != "" {
+		docTitle = knowledge.Title
 	} else {
 		for _, ch := range chunks {
 			if ch.Content != "" {
@@ -473,6 +475,53 @@ func (s *wikiIngestService) mapOneDocument(
 
 	sourceRef := fmt.Sprintf("%s|%s", knowledgeID, docTitle)
 	oldPageSlugs := s.getExistingPageSlugsForKnowledge(ctx, payload.KnowledgeBaseID, knowledgeID)
+	semanticSelection := selectSemanticSourceChunks(knowledge, chunks)
+	if semanticSelection.MissingTableSemantic {
+		logger.Warnf(ctx, "wiki ingest: spreadsheet knowledge %s has no table_summary/table_column chunks; creating minimal wiki page without scanning row-level text chunks", knowledgeID)
+		summaryLine, summaryBody := buildMinimalTableWikiContent(docTitle)
+		summarySlug := fmt.Sprintf("summary/%s", slugify(docTitle))
+		updates := []SlugUpdate{{
+			Slug:        summarySlug,
+			Type:        types.WikiPageTypeSummary,
+			DocTitle:    docTitle,
+			KnowledgeID: knowledgeID,
+			SourceRef:   sourceRef,
+			Language:    lang,
+			SummaryLine: summaryLine,
+			SummaryBody: summaryBody,
+		}}
+		for oldSlug := range oldPageSlugs {
+			if oldSlug == summarySlug {
+				continue
+			}
+			updates = append(updates, SlugUpdate{
+				Slug:              oldSlug,
+				Type:              "retractStale",
+				RetractDocContent: summaryBody,
+				DocTitle:          docTitle,
+				KnowledgeID:       knowledgeID,
+				Language:          lang,
+			})
+		}
+		return &docIngestResult{
+			KnowledgeID: knowledgeID,
+			DocTitle:    docTitle,
+			Summary:     summaryLine,
+			Pages:       []string{summarySlug},
+		}, updates, nil
+	}
+	chunks = semanticSelection.Chunks
+	if len(chunks) == 0 {
+		logger.Infof(ctx, "wiki ingest: document %s has no semantic source chunks, skip", knowledgeID)
+		return nil, nil, nil
+	}
+
+	content := reconstructSemanticSourceContent(ctx, s.chunkRepo, payload.TenantID, chunks)
+	rawRuneCount := len([]rune(content))
+	if len([]rune(content)) > maxContentForWiki {
+		content = string([]rune(content)[:maxContentForWiki])
+	}
+	logger.Infof(ctx, "wiki ingest: doc %s mode=%s chunks=%d content_len(raw=%d,truncated=%d)", knowledgeID, semanticSelection.Mode, len(chunks), rawRuneCount, len([]rune(content)))
 
 	// Pass 0: lightweight candidate slug extraction (skeleton only).
 	// On failure we fall back to the legacy single-shot extractor so the doc

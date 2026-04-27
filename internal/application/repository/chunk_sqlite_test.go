@@ -95,6 +95,33 @@ func TestCreateChunks_SQLite_SeqIDContinuesFromExisting(t *testing.T) {
 	}
 }
 
+func TestListChunksByKnowledgeIDAndTypes_FiltersAndOrders(t *testing.T) {
+	db := setupChunkTestDB(t)
+	repo := NewChunkRepository(db)
+	ctx := context.Background()
+
+	kbID := uuid.New().String()
+	knowledgeID := uuid.New().String()
+	otherKnowledgeID := uuid.New().String()
+	text := makeChunk(kbID, knowledgeID, types.ChunkTypeText)
+	text.ChunkIndex = 3
+	summary := makeChunk(kbID, knowledgeID, types.ChunkTypeTableSummary)
+	summary.ChunkIndex = 1
+	column := makeChunk(kbID, knowledgeID, types.ChunkTypeTableColumn)
+	column.ChunkIndex = 2
+	otherType := makeChunk(kbID, knowledgeID, types.ChunkTypeFAQ)
+	otherKnowledge := makeChunk(kbID, otherKnowledgeID, types.ChunkTypeTableSummary)
+	require.NoError(t, repo.CreateChunks(ctx, []*types.Chunk{text, summary, column, otherType, otherKnowledge}))
+
+	got, err := repo.ListChunksByKnowledgeIDAndTypes(ctx, 1, knowledgeID, []types.ChunkType{
+		types.ChunkTypeTableSummary,
+		types.ChunkTypeTableColumn,
+	})
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	assert.Equal(t, []types.ChunkType{types.ChunkTypeTableSummary, types.ChunkTypeTableColumn}, []types.ChunkType{got[0].ChunkType, got[1].ChunkType})
+}
+
 func TestCreateChunks_SQLite_SeqIDUniqueAcrossKBs(t *testing.T) {
 	db := setupChunkTestDB(t)
 	repo := NewChunkRepository(db)

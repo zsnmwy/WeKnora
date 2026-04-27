@@ -89,6 +89,7 @@ func NewAsynqServer() *asynq.Server {
 			Queues: map[string]int{
 				"critical": 6, // Highest priority queue
 				"default":  3, // Default priority queue
+				"graph":    2, // Graph extraction queue
 				"low":      1, // Lowest priority queue
 			},
 			RetryDelayFunc: asynqRetryDelayFunc,

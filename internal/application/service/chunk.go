@@ -142,6 +142,25 @@ func (s *chunkService) ListChunksByKnowledgeID(ctx context.Context, knowledgeID 
 	return chunks, nil
 }
 
+func (s *chunkService) ListChunksByKnowledgeIDAndTypes(
+	ctx context.Context,
+	knowledgeID string,
+	chunkTypes []types.ChunkType,
+) ([]*types.Chunk, error) {
+	tenantID := types.MustTenantIDFromContext(ctx)
+	chunks, err := s.chunkRepository.ListChunksByKnowledgeIDAndTypes(ctx, tenantID, knowledgeID, chunkTypes)
+	if err != nil {
+		logger.ErrorWithFields(ctx, err, map[string]interface{}{
+			"knowledge_id": knowledgeID,
+			"tenant_id":    tenantID,
+			"chunk_types":  chunkTypes,
+		})
+		return nil, err
+	}
+	logger.Infof(ctx, "Retrieved %d chunks for knowledge %s with types %v", len(chunks), knowledgeID, chunkTypes)
+	return chunks, nil
+}
+
 // ListPagedChunksByKnowledgeID lists chunks for a knowledge ID with pagination
 // This method retrieves chunks with pagination support for better performance with large datasets
 // Parameters:

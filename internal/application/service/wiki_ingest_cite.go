@@ -153,7 +153,10 @@ func splitChunksIntoCitationBatches(chunks []*types.Chunk) []chunkBatch {
 		if c == nil || c.Content == "" {
 			continue
 		}
-		if c.ChunkType != types.ChunkTypeText && c.ChunkType != "" {
+		if c.ChunkType != types.ChunkTypeText &&
+			c.ChunkType != types.ChunkTypeTableSummary &&
+			c.ChunkType != types.ChunkTypeTableColumn &&
+			c.ChunkType != "" {
 			continue
 		}
 		filtered = append(filtered, c)

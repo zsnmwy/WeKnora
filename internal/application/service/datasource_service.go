@@ -3,6 +3,8 @@ package service
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,6 +26,7 @@ type DataSourceService struct {
 	syncLogRepo       interfaces.SyncLogRepository
 	knowledgeService  interfaces.KnowledgeService
 	kbService         interfaces.KnowledgeBaseService
+	chunkRepo         interfaces.ChunkRepository
 	taskEnqueuer      interfaces.TaskEnqueuer
 	connectorRegistry *datasource.ConnectorRegistry
 	scheduler         *datasource.Scheduler
@@ -37,6 +40,7 @@ func NewDataSourceService(
 	syncLogRepo interfaces.SyncLogRepository,
 	knowledgeService interfaces.KnowledgeService,
 	kbService interfaces.KnowledgeBaseService,
+	chunkRepo interfaces.ChunkRepository,
 	taskEnqueuer interfaces.TaskEnqueuer,
 	connectorRegistry *datasource.ConnectorRegistry,
 	scheduler *datasource.Scheduler,
@@ -48,6 +52,7 @@ func NewDataSourceService(
 		syncLogRepo:       syncLogRepo,
 		knowledgeService:  knowledgeService,
 		kbService:         kbService,
+		chunkRepo:         chunkRepo,
 		taskEnqueuer:      taskEnqueuer,
 		connectorRegistry: connectorRegistry,
 		scheduler:         scheduler,
@@ -536,7 +541,7 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 			continue
 		}
 
-		isUpdate, err := s.ingestItem(ctx, ds, &item, autoTagID)
+		isUpdate, skipped, err := s.ingestItem(ctx, ds, &item, autoTagID)
 		if err != nil {
 			// Duplicate file/URL is not a failure — count as skipped
 			var dupErr *types.DuplicateKnowledgeError
@@ -548,6 +553,8 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 				result.Failed++
 				result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", item.Title, err))
 			}
+		} else if skipped {
+			result.Skipped++
 		} else if isUpdate {
 			result.Updated++
 		} else {
@@ -633,15 +640,61 @@ func (s *DataSourceService) validateDataSourceConfig(ctx context.Context, ds *ty
 	return connector.Validate(ctx, config)
 }
 
+func (s *DataSourceService) isExistingKnowledgeReadyForHashSkip(ctx context.Context, existing *types.Knowledge) bool {
+	if existing == nil || !isKnowledgeStatusReadyForHashSkip(existing) {
+		return false
+	}
+	if !isTableDocumentKnowledge(existing) {
+		return true
+	}
+	if s.chunkRepo == nil {
+		logger.Warnf(ctx, "cannot verify table semantic chunks for knowledge %s before hash skip: chunk repository is nil", existing.ID)
+		return false
+	}
+	chunks, err := s.chunkRepo.ListChunksByKnowledgeIDAndTypes(
+		ctx,
+		existing.TenantID,
+		existing.ID,
+		tableSemanticChunkTypes,
+	)
+	if err != nil {
+		logger.Warnf(ctx, "cannot verify table semantic chunks for knowledge %s before hash skip: %v", existing.ID, err)
+		return false
+	}
+	return isKnowledgeReadyForHashSkip(existing, chunks, nil)
+}
+
+func isKnowledgeStatusReadyForHashSkip(existing *types.Knowledge) bool {
+	if existing == nil {
+		return false
+	}
+	return existing.ParseStatus == types.ParseStatusCompleted && existing.EnableStatus == "enabled"
+}
+
+func isKnowledgeReadyForHashSkip(existing *types.Knowledge, tableSemanticChunks []*types.Chunk, tableSemanticErr error) bool {
+	if !isKnowledgeStatusReadyForHashSkip(existing) {
+		return false
+	}
+	if !isTableDocumentKnowledge(existing) {
+		return true
+	}
+	if tableSemanticErr != nil {
+		return false
+	}
+	return len(filterChunksByTypes(tableSemanticChunks, tableSemanticChunkTypes...)) > 0
+}
+
 // ingestItem writes a single FetchedItem into the knowledge base.
-// If a knowledge item with the same external_id already exists, it is deleted first (update = delete + re-create).
+// If a knowledge item with the same external_id already exists, unchanged file
+// content is skipped; changed content is handled as update = delete + re-create.
 //
 // Routing logic:
 //   - Has Content bytes → CreateKnowledgeFromFile (走完整的文档解析 pipeline)
 //   - Has URL only      → CreateKnowledgeFromURL  (让 WeKnora 下载并解析)
 //
-// Returns (isUpdate, error) — isUpdate is true when an existing item was replaced.
-func (s *DataSourceService) ingestItem(ctx context.Context, ds *types.DataSource, item *types.FetchedItem, tagID string) (bool, error) {
+// Returns (isUpdate, skipped, error) — isUpdate is true when an existing item
+// was replaced, skipped is true when the source content hash did not change.
+func (s *DataSourceService) ingestItem(ctx context.Context, ds *types.DataSource, item *types.FetchedItem, tagID string) (bool, bool, error) {
 	channel := ds.Type // e.g. "feishu", "notion"
 
 	metadata := map[string]string{
@@ -655,6 +708,7 @@ func (s *DataSourceService) ingestItem(ctx context.Context, ds *types.DataSource
 
 	// Check if a knowledge item with this external_id already exists → delete it first (update)
 	isUpdate := false
+	incomingHash := calculateBytesMD5(item.Content)
 	if item.ExternalID != "" {
 		repo := s.knowledgeService.GetRepository()
 		existing, err := repo.FindByMetadataKey(ctx, ds.TenantID, ds.KnowledgeBaseID, "external_id", item.ExternalID)
@@ -662,6 +716,13 @@ func (s *DataSourceService) ingestItem(ctx context.Context, ds *types.DataSource
 			logger.Warnf(ctx, "failed to check existing knowledge for external_id=%s: %v", item.ExternalID, err)
 			// Non-fatal: proceed with creation (may produce duplicate)
 		} else if existing != nil {
+			if incomingHash != "" && existing.FileHash == incomingHash && s.isExistingKnowledgeReadyForHashSkip(ctx, existing) {
+				logger.Infof(ctx, "item %q (external_id=%s) unchanged by file_hash=%s, skipping", item.Title, item.ExternalID, incomingHash)
+				return false, true, nil
+			}
+			if incomingHash != "" && existing.FileHash == incomingHash {
+				logger.Infof(ctx, "item %q (external_id=%s) unchanged by file_hash=%s but existing knowledge %s is not ready, recreating", item.Title, item.ExternalID, incomingHash, existing.ID)
+			}
 			logger.Infof(ctx, "found existing knowledge %s for external_id=%s, deleting for update", existing.ID, item.ExternalID)
 			if err := s.knowledgeService.DeleteKnowledge(ctx, existing.ID); err != nil {
 				logger.Warnf(ctx, "failed to delete existing knowledge %s: %v", existing.ID, err)
@@ -675,7 +736,7 @@ func (s *DataSourceService) ingestItem(ctx context.Context, ds *types.DataSource
 	if len(item.Content) > 0 {
 		fh, err := bytesToFileHeader(item.Content, item.FileName)
 		if err != nil {
-			return isUpdate, fmt.Errorf("build file header: %w", err)
+			return isUpdate, false, fmt.Errorf("build file header: %w", err)
 		}
 		_, err = s.knowledgeService.CreateKnowledgeFromFile(
 			ctx,
@@ -687,7 +748,7 @@ func (s *DataSourceService) ingestItem(ctx context.Context, ds *types.DataSource
 			tagID,         // auto-tag from data source
 			channel,
 		)
-		return isUpdate, err
+		return isUpdate, false, err
 	}
 
 	// Case 2: only a remote URL — let WeKnora handle downloading and parsing
@@ -703,10 +764,18 @@ func (s *DataSourceService) ingestItem(ctx context.Context, ds *types.DataSource
 			tagID, // auto-tag from data source
 			channel,
 		)
-		return isUpdate, err
+		return isUpdate, false, err
 	}
 
-	return isUpdate, fmt.Errorf("item has neither content nor URL")
+	return isUpdate, false, fmt.Errorf("item has neither content nor URL")
+}
+
+func calculateBytesMD5(data []byte) string {
+	if len(data) == 0 {
+		return ""
+	}
+	sum := md5.Sum(data)
+	return hex.EncodeToString(sum[:])
 }
 
 // bytesToFileHeader wraps a []byte into a *multipart.FileHeader so it can be
