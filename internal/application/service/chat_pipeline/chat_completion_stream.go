@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 
+	agenttoken "github.com/Tencent/WeKnora/internal/agent/token"
 	"github.com/Tencent/WeKnora/internal/event"
+	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/google/uuid"
@@ -204,13 +206,23 @@ func (p *PluginChatCompletionStream) OnEvent(ctx context.Context,
 						})
 					}
 					finalContent += response.Content
+					var contextUsage *event.AgentContextUsageData
+					if response.Done {
+						contextUsage = buildStreamContextUsage(chatManage, chatMessages, response.Usage)
+						chatManage.ChatResponse = &types.ChatResponse{
+							Content:      finalContent,
+							Usage:        derefTokenUsage(response.Usage),
+							FinishReason: response.FinishReason,
+						}
+					}
 					eventBus.Emit(ctx, types.Event{
 						ID:        answerID,
 						Type:      types.EventType(event.EventAgentFinalAnswer),
 						SessionID: chatManage.SessionID,
 						Data: event.AgentFinalAnswerData{
-							Content: response.Content,
-							Done:    response.Done,
+							Content:      response.Content,
+							Done:         response.Done,
+							ContextUsage: contextUsage,
 						},
 					})
 				}
@@ -219,4 +231,64 @@ func (p *PluginChatCompletionStream) OnEvent(ctx context.Context,
 	}()
 
 	return next()
+}
+
+func buildStreamContextUsage(
+	chatManage *types.ChatManage,
+	messages []chat.Message,
+	usage *types.TokenUsage,
+) *event.AgentContextUsageData {
+	if chatManage == nil || chatManage.MaxContextTokens <= 0 {
+		return nil
+	}
+
+	actualUsage := derefTokenUsage(usage)
+	providerUsageAvailable := actualUsage.PromptTokens > 0 ||
+		actualUsage.CompletionTokens > 0 ||
+		actualUsage.TotalTokens > 0
+
+	contextTokens := actualUsage.PromptTokens
+	if contextTokens <= 0 && actualUsage.TotalTokens > 0 {
+		contextTokens = actualUsage.TotalTokens - actualUsage.CompletionTokens
+	}
+	if contextTokens <= 0 {
+		contextTokens = estimateStreamContextTokens(messages)
+	}
+	if contextTokens < 0 {
+		contextTokens = 0
+	}
+
+	maxContextTokens := chatManage.MaxContextTokens
+	return &event.AgentContextUsageData{
+		ContextTokens:              contextTokens,
+		MaxContextTokens:           maxContextTokens,
+		ContextUsageRatio:          float64(contextTokens) / float64(maxContextTokens),
+		CompressionThresholdTokens: int(float64(maxContextTokens) * agenttoken.DefaultContextThresholdRatio),
+		PromptTokens:               actualUsage.PromptTokens,
+		CompletionTokens:           actualUsage.CompletionTokens,
+		TotalTokens:                actualUsage.TotalTokens,
+		ProviderUsageAvailable:     providerUsageAvailable,
+	}
+}
+
+func estimateStreamContextTokens(messages []chat.Message) int {
+	estimator, err := agenttoken.NewEstimator()
+	if err != nil {
+		totalChars := 0
+		for i := range messages {
+			totalChars += len(messages[i].Role) + len(messages[i].Content) + len(messages[i].ReasoningContent)
+		}
+		if totalChars == 0 {
+			return 0
+		}
+		return (totalChars + 3) / 4
+	}
+	return estimator.EstimateMessages(messages)
+}
+
+func derefTokenUsage(usage *types.TokenUsage) types.TokenUsage {
+	if usage == nil {
+		return types.TokenUsage{}
+	}
+	return *usage
 }

@@ -144,22 +144,6 @@
       </div>
     </div>
 
-    <div v-if="contextUsageDisplay" class="context-usage-strip" :class="`context-usage-${contextUsageLevel}`">
-      <div class="context-usage-row">
-        <div class="context-usage-label">{{ $t('agentStream.contextUsage.label') }}</div>
-        <div class="context-usage-value">
-          {{ contextUsageDisplay.used }} / {{ contextUsageDisplay.max }}
-        </div>
-      </div>
-      <div class="context-usage-track">
-        <div class="context-usage-bar" :style="{ width: contextUsageBarWidth }"></div>
-      </div>
-      <div class="context-usage-meta">
-        <span>{{ contextUsagePercentText }}</span>
-        <span v-if="contextUsageDetails">{{ contextUsageDetails }}</span>
-      </div>
-    </div>
-
     <!-- Event Stream (non-tree mode: before answer starts, or answer events) -->
     <div ref="streamingStepsContainer" class="streaming-steps-container" :class="{ 'streaming-steps-constrained': !hasAnswerStarted && !isConversationDone }">
     <template v-for="(event, index) in displayEvents" :key="getEventKey(event, index)">
@@ -746,17 +730,6 @@ interface SessionData {
   knowledge_references?: any[];
 }
 
-interface AgentContextUsage {
-  context_tokens?: number;
-  max_context_tokens?: number;
-  context_usage_ratio?: number;
-  compression_threshold_tokens?: number;
-  prompt_tokens?: number;
-  completion_tokens?: number;
-  total_tokens?: number;
-  provider_usage_available?: boolean;
-}
-
 const props = defineProps<{
   session: SessionData;
   userQuery?: string;
@@ -877,91 +850,6 @@ watch(eventStream, (stream) => {
     hasAnswerStarted.value = true;
   }
 }, { deep: true, immediate: true });
-
-const latestCompleteEvent = computed(() => {
-  const stream = eventStream.value;
-  if (!stream || !Array.isArray(stream)) return null;
-
-  for (let i = stream.length - 1; i >= 0; i--) {
-    const event = stream[i];
-    if (event?.type === 'agent_complete') {
-      return event;
-    }
-  }
-
-  return null;
-});
-
-const contextUsage = computed<AgentContextUsage | null>(() => {
-  const usage = latestCompleteEvent.value?.context_usage;
-  if (!usage || typeof usage !== 'object') return null;
-  if (!usage.max_context_tokens || !usage.context_tokens) return null;
-  return usage as AgentContextUsage;
-});
-
-const formatTokenCount = (value?: number): string => {
-  const n = Number(value || 0);
-  if (!Number.isFinite(n) || n <= 0) return '0';
-  return new Intl.NumberFormat().format(Math.round(n));
-};
-
-const contextUsageRatio = computed(() => {
-  const usage = contextUsage.value;
-  if (!usage) return 0;
-  if (typeof usage.context_usage_ratio === 'number' && Number.isFinite(usage.context_usage_ratio)) {
-    return usage.context_usage_ratio;
-  }
-  return (usage.context_tokens || 0) / (usage.max_context_tokens || 1);
-});
-
-const contextUsagePercentText = computed(() => {
-  const percent = Math.min(999, Math.max(0, contextUsageRatio.value * 100));
-  const value = percent >= 10 ? percent.toFixed(1) : percent.toFixed(2);
-  return t('agentStream.contextUsage.percent', { percent: value });
-});
-
-const contextUsageLevel = computed(() => {
-  const ratio = contextUsageRatio.value;
-  if (ratio >= 0.9) return 'critical';
-  if (ratio >= 0.8) return 'warning';
-  return 'normal';
-});
-
-const contextUsageBarWidth = computed(() => {
-  const percent = Math.min(100, Math.max(0, contextUsageRatio.value * 100));
-  return `${percent}%`;
-});
-
-const contextUsageDisplay = computed(() => {
-  const usage = contextUsage.value;
-  if (!usage) return null;
-  return {
-    used: formatTokenCount(usage.context_tokens),
-    max: formatTokenCount(usage.max_context_tokens),
-  };
-});
-
-const contextUsageDetails = computed(() => {
-  const usage = contextUsage.value;
-  if (!usage) return '';
-
-  if (!usage.provider_usage_available) {
-    return t('agentStream.contextUsage.estimated');
-  }
-
-  const parts: string[] = [];
-  if (usage.prompt_tokens) {
-    parts.push(t('agentStream.contextUsage.prompt', { tokens: formatTokenCount(usage.prompt_tokens) }));
-  }
-  if (usage.completion_tokens) {
-    parts.push(t('agentStream.contextUsage.completion', { tokens: formatTokenCount(usage.completion_tokens) }));
-  }
-  if (usage.total_tokens) {
-    parts.push(t('agentStream.contextUsage.total', { tokens: formatTokenCount(usage.total_tokens) }));
-  }
-
-  return parts.join(' · ');
-});
 
 // Check if conversation is done (based on answer event with done=true or stop event)
 const isConversationDone = computed(() => {
@@ -2394,82 +2282,6 @@ const handleAddToKnowledge = (answerEvent: any) => {
   font-size: 13px;
   padding: 0 2px 1px 2px;
   color: var(--td-brand-color);
-}
-
-.context-usage-strip {
-  margin: 0 0 10px 0;
-  padding: 8px 10px;
-  border: 1px solid var(--td-component-stroke);
-  border-radius: 6px;
-  background: var(--td-bg-color-container);
-  color: var(--td-text-color-secondary);
-}
-
-.context-usage-row,
-.context-usage-meta {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  min-width: 0;
-}
-
-.context-usage-label {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--td-text-color-primary);
-  white-space: nowrap;
-}
-
-.context-usage-value {
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  color: var(--td-text-color-primary);
-  white-space: nowrap;
-}
-
-.context-usage-track {
-  height: 4px;
-  margin: 7px 0 6px 0;
-  overflow: hidden;
-  border-radius: 999px;
-  background: var(--td-bg-color-secondarycontainer);
-}
-
-.context-usage-bar {
-  height: 100%;
-  border-radius: inherit;
-  background: var(--td-brand-color);
-  transition: width 0.24s ease;
-}
-
-.context-usage-meta {
-  font-size: 11px;
-  line-height: 1.35;
-  color: var(--td-text-color-placeholder);
-
-  span {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-}
-
-.context-usage-warning {
-  border-color: var(--td-warning-color-5);
-
-  .context-usage-bar {
-    background: var(--td-warning-color);
-  }
-}
-
-.context-usage-critical {
-  border-color: var(--td-error-color-5);
-
-  .context-usage-bar {
-    background: var(--td-error-color);
-  }
 }
 
 .tree-children {

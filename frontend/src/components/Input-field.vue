@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, watch, nextTick, h } from "vue";
+import { ref, onMounted, onUnmounted, computed, watch, nextTick, h, type PropType } from "vue";
 import { useRoute, useRouter } from 'vue-router';
 import { onBeforeRouteUpdate } from 'vue-router';
 import { MessagePlugin } from "tdesign-vue-next";
@@ -343,11 +343,25 @@ const props = defineProps({
     type: String,
     required: false
   },
+  contextUsage: {
+    type: Object as PropType<ContextUsage | null>,
+    default: null
+  },
   embeddedMode: {
     type: Boolean,
     default: false
   }
 });
+
+interface ContextUsage {
+  context_tokens?: number;
+  max_context_tokens?: number;
+  context_usage_ratio?: number;
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  provider_usage_available?: boolean;
+}
 
 const isAgentEnabled = computed(() => settingsStore.isAgentEnabled);
 const isWebSearchEnabled = computed(() => settingsStore.isWebSearchEnabled);
@@ -761,6 +775,36 @@ const selectedModelDisplayName = computed(() => {
   const modelFromAgent = agentModelId.value && agentModelId.value === selectedModelId.value;
   if (isSharedAgent && modelFromAgent) return t('input.sharedAgentModelLabel');
   return t('input.notConfigured');
+});
+
+const formatTokenCount = (value?: number): string => {
+  const n = Number(value || 0);
+  if (!Number.isFinite(n) || n <= 0) return '0';
+  return new Intl.NumberFormat().format(Math.round(n));
+};
+
+const contextUsageText = computed(() => {
+  const usage = props.contextUsage;
+  if (!usage?.context_tokens || !usage?.max_context_tokens) return '';
+  return `${formatTokenCount(usage.context_tokens)}/${formatTokenCount(usage.max_context_tokens)}`;
+});
+
+const contextUsageTitle = computed(() => {
+  if (!props.contextUsage || !contextUsageText.value) return '';
+  const parts = [t('agentStream.contextUsage.label'), contextUsageText.value];
+  if (props.contextUsage.provider_usage_available === false) {
+    parts.push(t('agentStream.contextUsage.estimated'));
+  }
+  if (props.contextUsage.prompt_tokens) {
+    parts.push(t('agentStream.contextUsage.prompt', { tokens: formatTokenCount(props.contextUsage.prompt_tokens) }));
+  }
+  if (props.contextUsage.completion_tokens) {
+    parts.push(t('agentStream.contextUsage.completion', { tokens: formatTokenCount(props.contextUsage.completion_tokens) }));
+  }
+  if (props.contextUsage.total_tokens) {
+    parts.push(t('agentStream.contextUsage.total', { tokens: formatTokenCount(props.contextUsage.total_tokens) }));
+  }
+  return parts.join(' · ');
 });
 
 const updateModelDropdownPosition = () => {
@@ -2222,6 +2266,13 @@ defineExpose({
             </div>
           </div>
         </t-tooltip>
+        <span
+          v-if="contextUsageText"
+          class="context-usage-inline"
+          :title="contextUsageTitle"
+        >
+          {{ contextUsageText }}
+        </span>
       </div>
 
       <Teleport to="body">
@@ -3040,6 +3091,22 @@ const getImgSrc = (url: string) => {
   color: var(--td-text-color-placeholder, #999);
 }
 
+.context-usage-inline {
+  flex-shrink: 0;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 6px;
+  border-radius: 5px;
+  background: var(--td-bg-color-secondarycontainer, #f5f5f5);
+  color: var(--td-text-color-secondary, #666);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
 .model-selector-overlay {
   position: fixed;
   inset: 0;
@@ -3316,5 +3383,3 @@ const getImgSrc = (url: string) => {
   }
 }
 </style>
-
-

@@ -27,6 +27,7 @@ type PipelineRequest struct {
 	// Chat model parameters
 	ChatModelID      string           `json:"chat_model_id"`
 	SummaryConfig    SummaryConfig    `json:"summary_config"`
+	MaxContextTokens int              `json:"max_context_tokens,omitempty"`
 	FallbackStrategy FallbackStrategy `json:"fallback_strategy"`
 	FallbackResponse string           `json:"fallback_response"`
 	FallbackPrompt   string           `json:"fallback_prompt"`
@@ -189,6 +190,7 @@ func (c *ChatManage) Clone() *ChatManage {
 			RerankThreshold:          c.RerankThreshold,
 			ChatModelID:              c.ChatModelID,
 			SummaryConfig:            c.SummaryConfig,
+			MaxContextTokens:         c.MaxContextTokens,
 			FallbackStrategy:         c.FallbackStrategy,
 			FallbackResponse:         c.FallbackResponse,
 			FallbackPrompt:           c.FallbackPrompt,

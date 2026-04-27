@@ -197,9 +197,10 @@ type AgentReferencesData struct {
 
 // AgentFinalAnswerData represents final answer streaming data
 type AgentFinalAnswerData struct {
-	Content    string `json:"content"`
-	Done       bool   `json:"done"`
-	IsFallback bool   `json:"is_fallback,omitempty"` // True when response is a fallback (no knowledge base match)
+	Content      string                 `json:"content"`
+	Done         bool                   `json:"done"`
+	IsFallback   bool                   `json:"is_fallback,omitempty"` // True when response is a fallback (no knowledge base match)
+	ContextUsage *AgentContextUsageData `json:"context_usage,omitempty"`
 }
 
 // AgentReflectionData represents agent reflection data

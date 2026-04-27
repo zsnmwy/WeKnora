@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -59,9 +60,11 @@ func (s *sessionService) KnowledgeQA(
 	// Resolve chat model vision capability and VLM model ID for image routing
 	var chatModelSupportsVision bool
 	var vlmModelID string
+	var chatModelMaxContextTokens int
 	if chatModelID != "" {
 		if chatModelInfo, err := s.modelService.GetModelByID(ctx, chatModelID); err == nil && chatModelInfo != nil {
 			chatModelSupportsVision = chatModelInfo.Parameters.SupportsVision
+			chatModelMaxContextTokens = resolveModelMaxContextTokens(chatModelInfo)
 		}
 	}
 	if req.CustomAgent != nil {
@@ -107,6 +110,7 @@ func (s *sessionService) KnowledgeQA(
 			RerankThreshold:         s.cfg.Conversation.RerankThreshold,
 			ChatModelID:             chatModelID,
 			SummaryConfig:           summaryConfig,
+			MaxContextTokens:        chatModelMaxContextTokens,
 			FallbackStrategy:        fallbackStrategy,
 			FallbackResponse:        s.cfg.Conversation.FallbackResponse,
 			FallbackPrompt:          s.cfg.Conversation.FallbackPrompt,
@@ -221,6 +225,27 @@ func (s *sessionService) KnowledgeQA(
 
 	logger.Info(ctx, "Knowledge base question answering initiated")
 	return nil
+}
+
+func resolveModelMaxContextTokens(model *types.Model) int {
+	if model == nil {
+		return 0
+	}
+
+	if raw := strings.TrimSpace(model.Parameters.ExtraConfig["max_context_tokens"]); raw != "" {
+		if value, err := strconv.Atoi(raw); err == nil && value > 0 {
+			return value
+		}
+	}
+
+	provider := strings.ToLower(strings.TrimSpace(model.Parameters.Provider))
+	source := strings.ToLower(strings.TrimSpace(string(model.Source)))
+	name := strings.ToLower(strings.TrimSpace(model.Name))
+	if provider == "deepseek" || source == "deepseek" || strings.Contains(name, "deepseek") {
+		return types.DefaultDeepSeekMaxContextTokens
+	}
+
+	return 0
 }
 
 // selectChatModelID selects the appropriate chat model ID with priority for Remote models

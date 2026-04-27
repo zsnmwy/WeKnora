@@ -34,10 +34,10 @@ type qaRequestContext struct {
 	webSearchEnabled  bool
 	enableMemory      bool // Whether memory feature is enabled
 	mentionedItems    types.MentionedItems
-	effectiveTenantID uint64            // when using shared agent, tenant ID for model/KB/MCP resolution; 0 = use context tenant
-	images            []ImageAttachment // Uploaded images with analysis text
-	userMessageID     string            // Created user message ID (populated after createUserMessage)
-	channel           string            // Source channel: "web", "api", "im", etc.
+	effectiveTenantID uint64                   // when using shared agent, tenant ID for model/KB/MCP resolution; 0 = use context tenant
+	images            []ImageAttachment        // Uploaded images with analysis text
+	userMessageID     string                   // Created user message ID (populated after createUserMessage)
+	channel           string                   // Source channel: "web", "api", "im", etc.
 	attachments       types.MessageAttachments // Processed file attachments
 }
 
@@ -571,10 +571,14 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 	// (Agent mode handles completion in the defer block instead)
 	if mode == qaModeNormal {
 		var completionHandled bool
+		var lastContextUsage *event.AgentContextUsageData
 		streamCtx.eventBus.On(event.EventAgentFinalAnswer, func(ctx context.Context, evt event.Event) error {
 			data, ok := evt.Data.(event.AgentFinalAnswerData)
 			if !ok {
 				return nil
+			}
+			if data.ContextUsage != nil {
+				lastContextUsage = data.ContextUsage
 			}
 			streamCtx.assistantMessage.Content += data.Content
 			if data.IsFallback {
@@ -592,7 +596,10 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 				streamCtx.eventBus.Emit(streamCtx.asyncCtx, event.Event{
 					Type:      event.EventAgentComplete,
 					SessionID: sessionID,
-					Data:      event.AgentCompleteData{FinalAnswer: streamCtx.assistantMessage.Content},
+					Data: event.AgentCompleteData{
+						FinalAnswer:  streamCtx.assistantMessage.Content,
+						ContextUsage: lastContextUsage,
+					},
 				})
 			}
 			return nil

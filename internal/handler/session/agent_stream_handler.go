@@ -315,6 +315,9 @@ func (h *AgentStreamHandler) handleFinalAnswer(ctx context.Context, evt event.Ev
 	if data.IsFallback {
 		metadata["is_fallback"] = true
 	}
+	if data.ContextUsage != nil {
+		metadata["context_usage"] = data.ContextUsage
+	}
 	h.mu.Unlock()
 
 	// Append this chunk to stream (frontend will accumulate by event ID)

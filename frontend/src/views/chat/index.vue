@@ -77,6 +77,7 @@
                 :isReplying="isReplying"
                 :sessionId="session_id"
                 :assistantMessageId="currentAssistantMessageId"
+                :contextUsage="currentContextUsage"
                 :embeddedMode="embeddedMode"
             ></InputField>
         </div>
@@ -132,6 +133,7 @@ const limit = ref(20);
 const messagesList = reactive([]);
 const isReplying = ref(false);
 const currentAssistantMessageId = ref(''); // 当前正在生成的 assistant message ID
+const currentContextUsage = ref(null);
 const scrollLock = ref(false);
 const isNeedTitle = ref(false);
 const isFirstEnter = ref(true);
@@ -483,6 +485,7 @@ const sendMsg = async (value, modelId = '', mentionedItems = [], imageFiles = []
     userquery.value = value;
     isReplying.value = true;
     loading.value = true;
+    currentContextUsage.value = null;
 
     // Convert images to base64 data URIs for backend processing and local display
     let imageAttachments = [];
@@ -616,6 +619,8 @@ onChunk((data) => {
         session_id: data.session_id,
         assistant_message_id: data.assistant_message_id
     });
+
+    updateContextUsageFromChunk(data);
     
     // 处理 agent query 事件 - 保存 assistant message ID 并保持 loading 状态
     if (data.response_type === 'agent_query') {
@@ -1112,6 +1117,13 @@ const handleAgentChunk = (data) => {
     scrollToBottom();
 };
 
+const updateContextUsageFromChunk = (data) => {
+    const usage = data?.data?.context_usage || data?.context_usage;
+    if (!usage || typeof usage !== 'object') return;
+    if (!usage.max_context_tokens || !usage.context_tokens) return;
+    currentContextUsage.value = usage;
+};
+
 const updateAssistantSession = (payload) => {
     const message = messagesList.findLast((item) => {
         if (item.request_id === payload.id) {
@@ -1200,6 +1212,7 @@ const clearData = () => {
     isReplying.value = false;
     fullContent.value = '';
     userquery.value = '';
+    currentContextUsage.value = null;
 
 }
 onUnmounted(() => {
