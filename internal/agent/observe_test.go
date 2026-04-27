@@ -6,6 +6,7 @@ import (
 	"time"
 
 	agenttools "github.com/Tencent/WeKnora/internal/agent/tools"
+	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/stretchr/testify/assert"
 )
@@ -123,4 +124,35 @@ func TestAnalyzeResponse_NonFinalAnswerTool_DoesNotTerminate(t *testing.T) {
 
 	assert.False(t, verdict.isDone,
 		"non-terminal tool calls must keep the loop running")
+}
+
+func TestAppendToolResults_PreservesReasoningContent(t *testing.T) {
+	engine := newTestEngine(t, &mockChat{})
+	step := types.AgentStep{
+		Thought:          "I will search.",
+		ReasoningContent: "Need a lookup before answering.",
+		ToolCalls: []types.ToolCall{{
+			ID:   "call-1",
+			Name: agenttools.ToolKnowledgeSearch,
+			Args: map[string]interface{}{"query": "deepseek"},
+			Result: &types.ToolResult{
+				Success: true,
+				Output:  "result",
+			},
+		}},
+	}
+
+	messages := engine.appendToolResults(
+		context.Background(),
+		[]chat.Message{{Role: "user", Content: "question"}},
+		step,
+	)
+
+	requireLen := 3
+	assert.Len(t, messages, requireLen)
+	assistantMsg := messages[1]
+	assert.Equal(t, "assistant", assistantMsg.Role)
+	assert.Equal(t, "I will search.", assistantMsg.Content)
+	assert.Equal(t, "Need a lookup before answering.", assistantMsg.ReasoningContent)
+	assert.Len(t, assistantMsg.ToolCalls, 1)
 }

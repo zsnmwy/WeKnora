@@ -3100,6 +3100,14 @@ export default {
     saveToKb: {
       emptyContent: 'Текущий ответ пуст, сохранение в базу знаний невозможно',
       editorOpened: 'Редактор открыт, выберите базу знаний и сохраните'
+    },
+    contextUsage: {
+      label: 'Использование контекста',
+      percent: '{percent}%',
+      estimated: 'Оценка',
+      prompt: 'Ввод {tokens}',
+      completion: 'Вывод {tokens}',
+      total: 'Всего {tokens}'
     }
   },
   agentEditor: {

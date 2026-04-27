@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -41,6 +42,8 @@ type RemoteAPIChat struct {
 	provider  provider.ProviderName
 	appID     string
 	appSecret string
+	// extraConfig stores provider-specific model options from ModelParameters.ExtraConfig.
+	extraConfig map[string]string
 	// customHeaders 为用户在模型配置中指定的自定义 HTTP 请求头（类似 OpenAI Python SDK 的 extra_headers）。
 	customHeaders map[string]string
 
@@ -123,6 +126,7 @@ func NewRemoteAPIChat(chatConfig *ChatConfig) (*RemoteAPIChat, error) {
 		provider:      providerName,
 		appID:         chatConfig.AppID,
 		appSecret:     chatConfig.AppSecret,
+		extraConfig:   chatConfig.ExtraConfig,
 		customHeaders: chatConfig.CustomHeaders,
 	}, nil
 }
@@ -142,9 +146,14 @@ func (c *RemoteAPIChat) SetHeaderCustomizer(customizer func(req *http.Request, b
 	c.headerCustomizer = customizer
 }
 
+func (c *RemoteAPIChat) shouldForwardReasoningContent() bool {
+	return c.provider == provider.ProviderDeepSeek
+}
+
 // ConvertMessages 转换消息格式为 OpenAI 格式（导出供子类使用）
 func (c *RemoteAPIChat) ConvertMessages(messages []Message) []openai.ChatCompletionMessage {
 	openaiMessages := make([]openai.ChatCompletionMessage, 0, len(messages))
+	forwardReasoningContent := c.shouldForwardReasoningContent()
 	for _, msg := range messages {
 		openaiMsg := openai.ChatCompletionMessage{
 			Role: msg.Role,
@@ -191,6 +200,10 @@ func (c *RemoteAPIChat) ConvertMessages(messages []Message) []openai.ChatComplet
 			openaiMsg.MultiContent = parts
 		} else if msg.Content != "" {
 			openaiMsg.Content = msg.Content
+		}
+
+		if forwardReasoningContent && msg.Role == "assistant" && msg.ReasoningContent != "" {
+			openaiMsg.ReasoningContent = msg.ReasoningContent
 		}
 
 		if len(msg.ToolCalls) > 0 {
@@ -247,6 +260,9 @@ func (c *RemoteAPIChat) BuildChatCompletionRequest(messages []Message, opts *Cha
 		if opts.PresencePenalty > 0 {
 			req.PresencePenalty = float32(opts.PresencePenalty)
 		}
+		if opts.ReasoningEffort != "" {
+			req.ReasoningEffort = opts.ReasoningEffort
+		}
 
 		// 处理 Tools
 		if len(opts.Tools) > 0 {
@@ -299,6 +315,64 @@ func (c *RemoteAPIChat) BuildChatCompletionRequest(messages []Message, opts *Cha
 	return req
 }
 
+func (c *RemoteAPIChat) effectiveChatOptions(opts *ChatOptions) *ChatOptions {
+	var effective ChatOptions
+	if opts != nil {
+		effective = *opts
+	}
+
+	if thinking, ok := parseThinkingExtraConfig(c.extraConfig); ok {
+		effective.Thinking = &thinking
+	}
+
+	if effective.ReasoningEffort == "" {
+		effective.ReasoningEffort = normalizeReasoningEffort(c.extraConfig["reasoning_effort"])
+	}
+
+	if effective.MaxCompletionTokens <= 0 {
+		effective.MaxCompletionTokens = parsePositiveIntExtraConfig(c.extraConfig, "max_completion_tokens")
+	}
+
+	return &effective
+}
+
+func parseThinkingExtraConfig(extra map[string]string) (bool, bool) {
+	raw := strings.TrimSpace(strings.ToLower(extra["thinking"]))
+	if raw == "" {
+		raw = strings.TrimSpace(strings.ToLower(extra["thinking_type"]))
+	}
+	switch raw {
+	case "enabled", "enable", "true", "1", "yes", "on":
+		return true, true
+	case "disabled", "disable", "false", "0", "no", "off":
+		return false, true
+	default:
+		return false, false
+	}
+}
+
+func normalizeReasoningEffort(raw string) string {
+	effort := strings.TrimSpace(strings.ToLower(raw))
+	switch effort {
+	case "xhigh":
+		return "max"
+	default:
+		return effort
+	}
+}
+
+func parsePositiveIntExtraConfig(extra map[string]string, key string) int {
+	raw := strings.TrimSpace(extra[key])
+	if raw == "" {
+		return 0
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value <= 0 {
+		return 0
+	}
+	return value
+}
+
 // logRequest 记录请求日志
 func (c *RemoteAPIChat) logRequest(ctx context.Context, req any, isStream bool) {
 	if jsonData, err := json.MarshalIndent(req, "", "  "); err == nil {
@@ -308,6 +382,7 @@ func (c *RemoteAPIChat) logRequest(ctx context.Context, req any, isStream bool) 
 
 // Chat 进行非流式聊天
 func (c *RemoteAPIChat) Chat(ctx context.Context, messages []Message, opts *ChatOptions) (*types.ChatResponse, error) {
+	opts = c.effectiveChatOptions(opts)
 	req := c.BuildChatCompletionRequest(messages, opts, false)
 	var customEndpoint string
 	if c.endpointCustomizer != nil {
@@ -426,8 +501,9 @@ func (c *RemoteAPIChat) parseCompletionResponse(resp *openai.ChatCompletionRespo
 	content := removeThinkingContent(choice.Message.Content)
 
 	response := &types.ChatResponse{
-		Content:      content,
-		FinishReason: string(choice.FinishReason),
+		Content:          content,
+		ReasoningContent: choice.Message.ReasoningContent,
+		FinishReason:     string(choice.FinishReason),
 		Usage: types.TokenUsage{
 			PromptTokens:     resp.Usage.PromptTokens,
 			CompletionTokens: resp.Usage.CompletionTokens,
@@ -476,6 +552,7 @@ func removeThinkingContent(content string) string {
 
 // ChatStream 进行流式聊天
 func (c *RemoteAPIChat) ChatStream(ctx context.Context, messages []Message, opts *ChatOptions) (<-chan types.StreamResponse, error) {
+	opts = c.effectiveChatOptions(opts)
 	req := c.BuildChatCompletionRequest(messages, opts, true)
 
 	var customEndpoint string

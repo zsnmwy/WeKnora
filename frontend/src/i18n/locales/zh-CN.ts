@@ -3469,6 +3469,14 @@ export default {
       emptyContent: "当前回答为空，无法保存到知识库",
       editorOpened: "已打开编辑器，请选择知识库后保存",
     },
+    contextUsage: {
+      label: "上下文使用量",
+      percent: "{percent}%",
+      estimated: "估算值",
+      prompt: "输入 {tokens}",
+      completion: "输出 {tokens}",
+      total: "总计 {tokens}",
+    },
   },
   agentEditor: {
     builtinHint: "这是内置智能体，名称和描述不可修改，但可以调整配置参数",

@@ -203,7 +203,9 @@ func lkeapRequestCustomizer(
 }
 
 // deepseekRequestCustomizer 自定义 DeepSeek 请求
-// DeepSeek 模型不支持 tool_choice 参数，需要清除
+// DeepSeek 模型不支持 tool_choice 参数，需要清除。
+// 官方 OpenAI 兼容格式使用 {"thinking":{"type":"enabled|disabled"}}
+// 控制思考模式；reasoning_effort 字段由 BuildChatCompletionRequest 透传。
 func deepseekRequestCustomizer(
 	req *openai.ChatCompletionRequest, opts *ChatOptions, _ bool,
 ) (any, bool) {
@@ -211,7 +213,21 @@ func deepseekRequestCustomizer(
 		logger.Infof(context.Background(), "deepseek model, skip tool_choice")
 		req.ToolChoice = nil
 	}
-	return nil, false
+	if opts == nil || opts.Thinking == nil {
+		return nil, false
+	}
+
+	deepseekReq := ThinkingChatCompletionRequest{
+		ChatCompletionRequest: *req,
+	}
+	thinkingType := "disabled"
+	if *opts.Thinking {
+		thinkingType = "enabled"
+	}
+	deepseekReq.Thinking = &ThinkingConfig{Type: thinkingType}
+
+	// 必须使用 raw HTTP，否则 SDK 会过滤掉 DeepSeek 扩展字段 thinking。
+	return deepseekReq, true
 }
 
 // genericRequestCustomizer 自定义 Generic 请求

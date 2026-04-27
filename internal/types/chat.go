@@ -27,10 +27,11 @@ type FunctionCall struct {
 
 // ChatResponse chat response
 type ChatResponse struct {
-	Content      string       `json:"content"`
-	ToolCalls    []LLMToolCall `json:"tool_calls,omitempty"`
-	FinishReason string       `json:"finish_reason,omitempty"`
-	Usage        TokenUsage   `json:"usage"`
+	Content          string        `json:"content"`
+	ReasoningContent string        `json:"reasoning_content,omitempty"`
+	ToolCalls        []LLMToolCall `json:"tool_calls,omitempty"`
+	FinishReason     string        `json:"finish_reason,omitempty"`
+	Usage            TokenUsage    `json:"usage"`
 }
 
 // Response type

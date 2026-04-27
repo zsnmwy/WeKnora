@@ -7,8 +7,12 @@ import (
 	"time"
 )
 
-// DefaultMaxContextTokens is the default context window budget for agent conversations (200k).
-const DefaultMaxContextTokens = 200000
+const (
+	// DefaultMaxContextTokens is the default context window budget for agent conversations (200k).
+	DefaultMaxContextTokens = 200000
+	// DefaultDeepSeekMaxContextTokens matches DeepSeek V4's documented 1M context window.
+	DefaultDeepSeekMaxContextTokens = 1000000
+)
 
 // AgentConfig represents the full agent configuration (used at tenant level and runtime)
 // This includes all configuration parameters for agent execution
@@ -186,10 +190,11 @@ type ToolCall struct {
 
 // AgentStep represents one iteration of the ReAct loop
 type AgentStep struct {
-	Iteration int        `json:"iteration"`  // Iteration number (0-indexed)
-	Thought   string     `json:"thought"`    // LLM's reasoning/thinking (Think phase)
-	ToolCalls []ToolCall `json:"tool_calls"` // Tools called in this step (Act phase)
-	Timestamp time.Time  `json:"timestamp"`  // When this step occurred
+	Iteration        int        `json:"iteration"`                   // Iteration number (0-indexed)
+	Thought          string     `json:"thought"`                     // LLM visible content for the Think phase
+	ReasoningContent string     `json:"reasoning_content,omitempty"` // Provider reasoning_content for compliant replay
+	ToolCalls        []ToolCall `json:"tool_calls"`                  // Tools called in this step (Act phase)
+	Timestamp        time.Time  `json:"timestamp"`                   // When this step occurred
 }
 
 // GetObservations returns observations from all tool calls in this step

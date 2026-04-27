@@ -337,7 +337,7 @@
                         <p class="desc">{{ $t('agentEditor.desc.maxTokens') }}</p>
                       </div>
                       <div class="setting-control">
-                        <t-input-number v-model="formData.config.max_completion_tokens" :min="100" :max="100000" :step="100" theme="column" />
+                        <t-input-number v-model="formData.config.max_completion_tokens" :min="100" :max="MAX_COMPLETION_TOKENS" :step="100" theme="column" />
                       </div>
                     </div>
 
@@ -1392,6 +1392,7 @@ const authStore = useAuthStore();
 const orgStore = useOrganizationStore();
 
 const { t, locale: i18nLocale } = useI18n();
+const MAX_COMPLETION_TOKENS = 384 * 1024;
 
 const props = defineProps<{
   visible: boolean;

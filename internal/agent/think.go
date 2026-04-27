@@ -15,10 +15,11 @@ import (
 
 // streamLLMResult holds accumulated output from a streaming LLM call.
 type streamLLMResult struct {
-	Content      string
-	ToolCalls    []types.LLMToolCall
-	Usage        *types.TokenUsage
-	FinishReason string // actual finish_reason from LLM (captured from last stream chunk)
+	Content          string
+	ReasoningContent string
+	ToolCalls        []types.LLMToolCall
+	Usage            *types.TokenUsage
+	FinishReason     string // actual finish_reason from LLM (captured from last stream chunk)
 }
 
 // streamLLMToEventBus streams LLM response through EventBus (generic method)
@@ -55,7 +56,11 @@ func (e *AgentEngine) streamLLMToEventBus(
 		if chunk.Content != "" {
 			isExtracted := chunk.Data != nil && chunk.Data["source"] != nil
 			if !isExtracted {
-				result.Content += chunk.Content
+				if chunk.ResponseType == types.ResponseTypeThinking {
+					result.ReasoningContent += chunk.Content
+				} else {
+					result.Content += chunk.Content
+				}
 			}
 		}
 
@@ -81,9 +86,9 @@ func (e *AgentEngine) streamLLMToEventBus(
 	if !firstChunkTime.IsZero() {
 		streamDuration = time.Since(firstChunkTime)
 	}
-	logger.Infof(ctx, "[Agent][Stream] Completed: chunks=%d, content_len=%d, tool_calls=%d, "+
+	logger.Infof(ctx, "[Agent][Stream] Completed: chunks=%d, content_len=%d, reasoning_len=%d, tool_calls=%d, "+
 		"stream_duration=%dms, type_distribution=%v",
-		chunkCount, len(result.Content), len(result.ToolCalls),
+		chunkCount, len(result.Content), len(result.ReasoningContent), len(result.ToolCalls),
 		streamDuration.Milliseconds(), responseTypeCounts)
 
 	return result, nil
@@ -219,9 +224,10 @@ func (e *AgentEngine) streamThinkingToEventBus(
 	}
 
 	resp := &types.ChatResponse{
-		Content:      fullContent,
-		ToolCalls:    llmResult.ToolCalls,
-		FinishReason: finishReason,
+		Content:          fullContent,
+		ReasoningContent: llmResult.ReasoningContent,
+		ToolCalls:        llmResult.ToolCalls,
+		FinishReason:     finishReason,
 	}
 	if llmResult.Usage != nil {
 		resp.Usage = *llmResult.Usage

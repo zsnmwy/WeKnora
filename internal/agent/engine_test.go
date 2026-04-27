@@ -63,6 +63,12 @@ func withMaxIterations(n int) testEngineOption {
 	}
 }
 
+func withMaxContextTokens(n int) testEngineOption {
+	return func(cfg *types.AgentConfig) {
+		cfg.MaxContextTokens = n
+	}
+}
+
 func newTestEngine(t *testing.T, chatModel chat.Chat, opts ...testEngineOption) *AgentEngine {
 	t.Helper()
 	cfg := &types.AgentConfig{
@@ -218,4 +224,48 @@ func TestStreamThinkingToEventBus_PropagatesFinishReason(t *testing.T) {
 			assert.Equal(t, tt.wantReason, resp.FinishReason)
 		})
 	}
+}
+
+func TestStreamThinkingToEventBus_SeparatesReasoningContent(t *testing.T) {
+	mock := &mockChat{
+		responses: []mockResponse{
+			{chunks: []types.StreamResponse{
+				{ResponseType: types.ResponseTypeThinking, Content: "reason-1 "},
+				{ResponseType: types.ResponseTypeThinking, Content: "reason-2"},
+				{ResponseType: types.ResponseTypeAnswer, Content: "visible answer", Done: true, FinishReason: "tool_calls"},
+			}},
+		},
+	}
+
+	engine := newTestEngine(t, mock)
+	resp, err := engine.streamThinkingToEventBus(
+		context.Background(),
+		[]chat.Message{{Role: "user", Content: "test"}},
+		nil,
+		0,
+		"sess-1",
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, "visible answer", resp.Content)
+	assert.Equal(t, "reason-1 reason-2", resp.ReasoningContent)
+	assert.Equal(t, "tool_calls", resp.FinishReason)
+}
+
+func TestBuildContextUsageReportsProviderPromptAgainstAgentWindow(t *testing.T) {
+	engine := newTestEngine(t, &mockChat{}, withMaxContextTokens(1_000_000))
+	engine.recordUsage(types.TokenUsage{
+		PromptTokens:     999098,
+		CompletionTokens: 58,
+		TotalTokens:      999156,
+	})
+
+	usage := engine.buildContextUsage(emptyMessages())
+
+	require.NotNil(t, usage)
+	assert.Equal(t, 999098, usage.ContextTokens)
+	assert.Equal(t, 1_000_000, usage.MaxContextTokens)
+	assert.Equal(t, 800000, usage.CompressionThresholdTokens)
+	assert.True(t, usage.ProviderUsageAvailable)
+	assert.InDelta(t, 0.999098, usage.ContextUsageRatio, 0.000001)
 }

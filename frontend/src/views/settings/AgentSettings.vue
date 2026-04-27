@@ -620,7 +620,7 @@
             <t-input-number
               v-model="localMaxCompletionTokens"
               :min="1"
-              :max="100000"
+              :max="MAX_COMPLETION_TOKENS"
               :step="100"
               @change="handleMaxCompletionTokensChange"
               style="width: 200px;"
@@ -654,6 +654,7 @@ const activeSection = computed(() => props.activeSubSection || 'modes')
 const settingsStore = useSettingsStore()
 const router = useRouter()
 const { t } = useI18n()
+const MAX_COMPLETION_TOKENS = 384 * 1024
 
 // Tab 状态
 const activeTab = ref('agent')
@@ -2276,4 +2277,3 @@ const handleConversationRerankModelChange = async (value: string) => {
 }
 
 </style>
-

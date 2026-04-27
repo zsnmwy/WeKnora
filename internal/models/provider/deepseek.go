@@ -8,7 +8,7 @@ import (
 
 const (
 	// DeepSeekBaseURL DeepSeek 官方 API BaseURL
-	DeepSeekBaseURL = "https://api.deepseek.com/v1"
+	DeepSeekBaseURL = "https://api.deepseek.com"
 )
 
 // DeepSeekProvider 实现 DeepSeek 的 Provider 接口
@@ -23,7 +23,7 @@ func (p *DeepSeekProvider) Info() ProviderInfo {
 	return ProviderInfo{
 		Name:        ProviderDeepSeek,
 		DisplayName: "DeepSeek",
-		Description: "deepseek-chat, deepseek-reasoner, etc.",
+		Description: "deepseek-v4-flash, deepseek-v4-pro, etc.",
 		DefaultURLs: map[types.ModelType]string{
 			types.ModelTypeKnowledgeQA: DeepSeekBaseURL,
 		},

@@ -1081,11 +1081,12 @@ const handleAgentChunk = (data) => {
             loading.value = false;
             isReplying.value = false;
             // 将 total_duration_ms 存入事件流供 AgentStreamDisplay 使用
-            if (data.data?.total_duration_ms && message.agentEventStream) {
+            if (message.agentEventStream) {
                 message.agentEventStream.push({
                     type: 'agent_complete',
-                    total_duration_ms: data.data.total_duration_ms,
-                    total_steps: data.data.total_steps,
+                    total_duration_ms: data.data?.total_duration_ms,
+                    total_steps: data.data?.total_steps,
+                    context_usage: data.data?.context_usage,
                 });
             }
             break;

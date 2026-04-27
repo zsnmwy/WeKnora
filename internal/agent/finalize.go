@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	agenttoken "github.com/Tencent/WeKnora/internal/agent/token"
 	"github.com/Tencent/WeKnora/internal/common"
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -116,6 +117,9 @@ Now generate the final answer:`, query)
 	}
 
 	fullAnswer := llmResult.Content
+	if llmResult.Usage != nil {
+		e.recordUsage(*llmResult.Usage)
+	}
 	logger.Infof(ctx, "[Agent][FinalAnswer] Final answer generated: %d characters", len(fullAnswer))
 	common.PipelineInfo(ctx, "Agent", "final_answer_done", map[string]interface{}{
 		"session_id": sessionID,
@@ -149,7 +153,7 @@ func (e *AgentEngine) handleMaxIterations(
 
 // emitCompletionEvent emits the EventAgentComplete event with execution summary.
 func (e *AgentEngine) emitCompletionEvent(
-	ctx context.Context, state *types.AgentState, sessionID, messageID string, startTime time.Time,
+	ctx context.Context, state *types.AgentState, sessionID, messageID string, startTime time.Time, messages []chat.Message,
 ) {
 	// Convert knowledge refs to interface{} slice for event data
 	knowledgeRefsInterface := make([]interface{}, 0, len(state.KnowledgeRefs))
@@ -167,9 +171,42 @@ func (e *AgentEngine) emitCompletionEvent(
 			AgentSteps:      state.RoundSteps, // Include detailed execution steps for message storage
 			TotalSteps:      len(state.RoundSteps),
 			TotalDurationMs: time.Since(startTime).Milliseconds(),
+			ContextUsage:    e.buildContextUsage(messages),
 			MessageID:       messageID, // Include message ID for proper message update
 		},
 	})
 
 	logger.Infof(ctx, "Agent execution completed in %d rounds", state.CurrentRound)
+}
+
+func (e *AgentEngine) buildContextUsage(messages []chat.Message) *event.AgentContextUsageData {
+	if e == nil || e.config == nil || e.config.MaxContextTokens <= 0 {
+		return nil
+	}
+
+	usage := e.lastUsage
+	providerUsageAvailable := usage.PromptTokens > 0 || usage.CompletionTokens > 0 || usage.TotalTokens > 0
+
+	contextTokens := usage.PromptTokens
+	if contextTokens <= 0 && usage.TotalTokens > 0 {
+		contextTokens = usage.TotalTokens - usage.CompletionTokens
+	}
+	if contextTokens <= 0 {
+		contextTokens = e.estimateCurrentTokens(messages)
+	}
+	if contextTokens < 0 {
+		contextTokens = 0
+	}
+
+	maxContextTokens := e.config.MaxContextTokens
+	return &event.AgentContextUsageData{
+		ContextTokens:              contextTokens,
+		MaxContextTokens:           maxContextTokens,
+		ContextUsageRatio:          float64(contextTokens) / float64(maxContextTokens),
+		CompressionThresholdTokens: int(float64(maxContextTokens) * agenttoken.DefaultContextThresholdRatio),
+		PromptTokens:               usage.PromptTokens,
+		CompletionTokens:           usage.CompletionTokens,
+		TotalTokens:                usage.TotalTokens,
+		ProviderUsageAvailable:     providerUsageAvailable,
+	}
 }

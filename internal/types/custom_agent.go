@@ -124,6 +124,8 @@ type CustomAgentConfig struct {
 	MaxIterations int `yaml:"max_iterations" json:"max_iterations"`
 	// Timeout for a single LLM call in seconds (0 = use global default)
 	LLMCallTimeout int `yaml:"llm_call_timeout" json:"llm_call_timeout,omitempty"`
+	// Maximum context window tokens for smart-reasoning mode (0 = runtime default)
+	MaxContextTokens int `yaml:"max_context_tokens" json:"max_context_tokens,omitempty"`
 	// Allowed tools (only for agent type)
 	AllowedTools []string `yaml:"allowed_tools" json:"allowed_tools"`
 	// MCP service selection mode: "all" = all enabled MCP services, "selected" = specific services, "none" = no MCP

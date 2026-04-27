@@ -3471,6 +3471,14 @@ export default {
       emptyContent: 'Current response is empty, cannot save to knowledge base',
       editorOpened: 'Editor opened, please select a knowledge base and save',
     },
+    contextUsage: {
+      label: 'Context usage',
+      percent: '{percent}%',
+      estimated: 'Estimated',
+      prompt: 'Input {tokens}',
+      completion: 'Output {tokens}',
+      total: 'Total {tokens}',
+    },
   },
   agentEditor: {
     builtinHint: 'This is a built-in agent. Name and description cannot be modified, but configuration parameters can be adjusted.',

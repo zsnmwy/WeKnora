@@ -155,6 +155,13 @@ func (e *AgentEngine) estimateCurrentTokens(messages []chat.Message) int {
 	return e.tokenEstimator.EstimateMessages(messages)
 }
 
+func (e *AgentEngine) recordUsage(usage types.TokenUsage) {
+	if usage.PromptTokens <= 0 && usage.CompletionTokens <= 0 && usage.TotalTokens <= 0 {
+		return
+	}
+	e.lastUsage = usage
+}
+
 // Execute executes the agent with conversation history and streaming output
 // All events are emitted to EventBus and handled by subscribers (like Handler layer)
 func (e *AgentEngine) Execute(
@@ -399,7 +406,7 @@ loop:
 	}
 
 	// Emit completion event
-	e.emitCompletionEvent(ctx, state, sessionID, messageID, startTime)
+	e.emitCompletionEvent(ctx, state, sessionID, messageID, startTime, messages)
 
 	return state, nil
 }
@@ -518,8 +525,8 @@ func (e *AgentEngine) runReActIteration(
 		return iterOutcomeBreak, nil
 	}
 	response = resp
-	if response.Usage.TotalTokens > 0 {
-		e.lastUsage = response.Usage
+	if response.Usage.PromptTokens > 0 || response.Usage.CompletionTokens > 0 || response.Usage.TotalTokens > 0 {
+		e.recordUsage(response.Usage)
 		logger.Debugf(ctx, "[Agent][Round-%d] Usage: prompt=%d, completion=%d, total=%d",
 			round, response.Usage.PromptTokens,
 			response.Usage.CompletionTokens, response.Usage.TotalTokens)
@@ -548,10 +555,11 @@ func (e *AgentEngine) runReActIteration(
 
 	// Create agent step
 	step := types.AgentStep{
-		Iteration: state.CurrentRound,
-		Thought:   response.Content,
-		ToolCalls: make([]types.ToolCall, 0),
-		Timestamp: time.Now(),
+		Iteration:        state.CurrentRound,
+		Thought:          response.Content,
+		ReasoningContent: response.ReasoningContent,
+		ToolCalls:        make([]types.ToolCall, 0),
+		Timestamp:        time.Now(),
 	}
 
 	// 2. Analyze: Check for stop conditions (natural stop or final_answer tool)

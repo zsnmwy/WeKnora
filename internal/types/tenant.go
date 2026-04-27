@@ -12,6 +12,10 @@ import (
 	"gorm.io/gorm"
 )
 
+// MaxConversationCompletionTokens is an upper validation bound for providers
+// with very large output windows such as DeepSeek V4 (384K).
+const MaxConversationCompletionTokens = 384 * 1024
+
 // retrieverEngineMapping maps RETRIEVE_DRIVER values to retriever engine configurations
 var retrieverEngineMapping = map[string][]RetrieverEngineParams{
 	"postgres": {

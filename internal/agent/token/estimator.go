@@ -75,6 +75,7 @@ func (e *Estimator) EstimateMessage(msg *chat.Message) int {
 	tokens := perMessageOverhead
 	tokens += e.EstimateString(msg.Role)
 	tokens += e.EstimateString(msg.Content)
+	tokens += e.EstimateString(msg.ReasoningContent)
 	tokens += e.EstimateString(msg.Name)
 
 	for _, tc := range msg.ToolCalls {

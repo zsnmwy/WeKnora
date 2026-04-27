@@ -140,9 +140,22 @@ type AgentCompleteData struct {
 	KnowledgeRefs   []interface{}          `json:"knowledge_refs,omitempty"` // []*types.SearchResult
 	AgentSteps      interface{}            `json:"agent_steps,omitempty"`    // []types.AgentStep - detailed execution steps
 	TotalDurationMs int64                  `json:"total_duration_ms"`
+	ContextUsage    *AgentContextUsageData `json:"context_usage,omitempty"`
 	MessageID       string                 `json:"message_id,omitempty"` // Assistant message ID
 	RequestID       string                 `json:"request_id,omitempty"`
 	Extra           map[string]interface{} `json:"extra,omitempty"`
+}
+
+// AgentContextUsageData reports the context window usage for the last model call.
+type AgentContextUsageData struct {
+	ContextTokens              int     `json:"context_tokens"`
+	MaxContextTokens           int     `json:"max_context_tokens"`
+	ContextUsageRatio          float64 `json:"context_usage_ratio"`
+	CompressionThresholdTokens int     `json:"compression_threshold_tokens,omitempty"`
+	PromptTokens               int     `json:"prompt_tokens,omitempty"`
+	CompletionTokens           int     `json:"completion_tokens,omitempty"`
+	TotalTokens                int     `json:"total_tokens,omitempty"`
+	ProviderUsageAvailable     bool    `json:"provider_usage_available"`
 }
 
 // === Streaming Event Data Structures ===

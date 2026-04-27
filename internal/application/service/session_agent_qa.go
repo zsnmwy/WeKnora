@@ -12,6 +12,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/models/chat"
+	"github.com/Tencent/WeKnora/internal/models/provider"
 	"github.com/Tencent/WeKnora/internal/models/rerank"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -91,6 +92,12 @@ func (s *sessionService) AgentQA(
 		return fmt.Errorf("failed to get chat model: %w", err)
 	}
 
+	agentModelInfo, err := s.modelService.GetModelByID(ctx, effectiveModelID)
+	if err != nil {
+		logger.Warnf(ctx, "Failed to get model info for agent defaults: %v", err)
+	}
+	applyModelSpecificAgentDefaults(ctx, agentConfig, agentModelInfo)
+
 	// Get rerank model from custom agent config (only required when knowledge_search is allowed)
 	var rerankModel rerank.Reranker
 	hasKnowledgeSearchTool := false
@@ -166,10 +173,8 @@ func (s *sessionService) AgentQA(
 
 	// Route image data based on agent model's vision capability
 	var agentModelSupportsVision bool
-	if effectiveModelID != "" {
-		if modelInfo, err := s.modelService.GetModelByID(ctx, effectiveModelID); err == nil && modelInfo != nil {
-			agentModelSupportsVision = modelInfo.Parameters.SupportsVision
-		}
+	if agentModelInfo != nil {
+		agentModelSupportsVision = agentModelInfo.Parameters.SupportsVision
 	}
 
 	agentQuery := req.Query
@@ -227,6 +232,7 @@ func (s *sessionService) buildAgentConfig(
 		Thinking:                    customAgent.Config.Thinking,
 		RetrieveKBOnlyWhenMentioned: customAgent.Config.RetrieveKBOnlyWhenMentioned,
 		LLMCallTimeout:              customAgent.Config.LLMCallTimeout,
+		MaxContextTokens:            customAgent.Config.MaxContextTokens,
 		RetainRetrievalHistory:      customAgent.Config.RetainRetrievalHistory,
 	}
 
@@ -290,11 +296,36 @@ func (s *sessionService) buildAgentConfig(
 	agentConfig.SearchTargets = searchTargets
 	logger.Infof(ctx, "Agent search targets built: %d targets", len(searchTargets))
 
-	if agentConfig.MaxContextTokens <= 0 {
-		agentConfig.MaxContextTokens = types.DefaultMaxContextTokens
+	return agentConfig, nil
+}
+
+func applyModelSpecificAgentDefaults(ctx context.Context, config *types.AgentConfig, model *types.Model) {
+	if config == nil || config.MaxContextTokens > 0 {
+		return
 	}
 
-	return agentConfig, nil
+	if isDeepSeekModel(model) {
+		config.MaxContextTokens = types.DefaultDeepSeekMaxContextTokens
+		logger.Infof(ctx, "Using DeepSeek max_context_tokens default: %d", config.MaxContextTokens)
+		return
+	}
+
+	config.MaxContextTokens = types.DefaultMaxContextTokens
+}
+
+func isDeepSeekModel(model *types.Model) bool {
+	if model == nil {
+		return false
+	}
+	if model.Source == types.ModelSourceDeepseek {
+		return true
+	}
+
+	providerName := provider.ProviderName(model.Parameters.Provider)
+	if providerName == "" {
+		providerName = provider.DetectProvider(model.Parameters.BaseURL)
+	}
+	return providerName == provider.ProviderDeepSeek
 }
 
 // configureSkillsFromAgent configures skills settings in AgentConfig based on CustomAgentConfig

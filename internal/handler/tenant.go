@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -910,8 +911,11 @@ func validateConversationConfig(req *types.ConversationConfig) error {
 	if req.Temperature < 0 || req.Temperature > 2 {
 		return errors.NewBadRequestError("temperature must be between 0 and 2")
 	}
-	if req.MaxCompletionTokens <= 0 || req.MaxCompletionTokens > 100000 {
-		return errors.NewBadRequestError("max_completion_tokens must be between 1 and 100000")
+	if req.MaxCompletionTokens <= 0 || req.MaxCompletionTokens > types.MaxConversationCompletionTokens {
+		return errors.NewBadRequestError(fmt.Sprintf(
+			"max_completion_tokens must be between 1 and %d",
+			types.MaxConversationCompletionTokens,
+		))
 	}
 	if req.FallbackStrategy != "" &&
 		req.FallbackStrategy != string(types.FallbackStrategyFixed) &&

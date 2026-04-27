@@ -3486,6 +3486,14 @@ export default {
       emptyContent: '현재 응답이 비어 있어 지식베이스에 저장할 수 없습니다',
       editorOpened: '편집기가 열렸습니다. 지식베이스를 선택한 후 저장하세요',
     },
+    contextUsage: {
+      label: '컨텍스트 사용량',
+      percent: '{percent}%',
+      estimated: '추정값',
+      prompt: '입력 {tokens}',
+      completion: '출력 {tokens}',
+      total: '총 {tokens}',
+    },
   },
   agentEditor: {
     builtinHint: '내장 에이전트입니다. 이름과 설명은 수정할 수 없지만, 설정 매개변수는 조정할 수 있습니다.',
