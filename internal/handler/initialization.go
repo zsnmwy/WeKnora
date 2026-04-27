@@ -368,6 +368,7 @@ func (h *InitializationHandler) UpdateKBConfig(c *gin.Context) {
 	} else {
 		kb.ExtractConfig = &types.ExtractConfig{Enabled: false}
 	}
+	kb.IndexingStrategy.GraphEnabled = req.NodeExtract.Enabled
 	if err := validateExtractConfig(kb.ExtractConfig); err != nil {
 		logger.Error(ctx, "Invalid extract configuration", err)
 		c.Error(err)
@@ -797,6 +798,7 @@ func (h *InitializationHandler) applyKnowledgeBaseInitialization(
 
 	if req.NodeExtract.Enabled {
 		kb.ExtractConfig = &types.ExtractConfig{
+			Enabled:   true,
 			Text:      req.NodeExtract.Text,
 			Tags:      req.NodeExtract.Tags,
 			Nodes:     make([]*types.GraphNode, 0),
@@ -816,6 +818,10 @@ func (h *InitializationHandler) applyKnowledgeBaseInitialization(
 				Type:  relation.Type,
 			})
 		}
+		kb.IndexingStrategy.GraphEnabled = true
+	} else {
+		kb.ExtractConfig = &types.ExtractConfig{Enabled: false}
+		kb.IndexingStrategy.GraphEnabled = false
 	}
 }
 

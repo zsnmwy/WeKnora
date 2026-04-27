@@ -563,6 +563,7 @@ const loadKBData = async () => {
     }
 
     const kb = kbInfo.data
+    const graphExtractionEnabled = !!(kb.extract_config?.enabled || kb.indexing_strategy?.graph_enabled)
     hasFiles.value = (filesResult as any)?.total > 0
     
     // 设置表单数据
@@ -600,7 +601,7 @@ const loadKBData = async () => {
         language: kb.asr_config?.language || ''
       },
       nodeExtractConfig: {
-        enabled: kb.extract_config?.enabled || false,
+        enabled: graphExtractionEnabled,
         text: kb.extract_config?.text || '',
         tags: kb.extract_config?.tags || [],
         nodes: (kb.extract_config?.nodes || []).map((node: any) => ({
@@ -627,7 +628,7 @@ const loadKBData = async () => {
         vectorEnabled: kb.indexing_strategy?.vector_enabled ?? true,
         keywordEnabled: kb.indexing_strategy?.keyword_enabled ?? true,
         wikiEnabled: kb.indexing_strategy?.wiki_enabled ?? false,
-        graphEnabled: kb.indexing_strategy?.graph_enabled ?? false,
+        graphEnabled: graphExtractionEnabled,
       },
     }
     initialStorageProvider.value = formData.value.storageProvider
@@ -770,6 +771,7 @@ const handleQuestionGenerationUpdate = (config: any) => {
 const handleNodeExtractUpdate = (config: any) => {
   if (formData.value) {
     formData.value.nodeExtractConfig = { ...config }
+    formData.value.indexingStrategy.graphEnabled = !!config?.enabled
   }
 }
 
@@ -827,6 +829,7 @@ const validateForm = (): boolean => {
 // 构建提交数据
 const buildSubmitData = () => {
   if (!formData.value) return null
+  const graphExtractionEnabled = !!formData.value.nodeExtractConfig?.enabled
 
   const data: any = {
     name: formData.value.name,
@@ -874,8 +877,8 @@ const buildSubmitData = () => {
     provider: formData.value.storageProvider || 'local'
   }
 
-  // 添加知识图谱配置 — now synced via indexingStrategy.graphEnabled
-  // extract_config is sent below along with indexing_strategy
+  // 添加知识图谱配置：图谱页的启用开关是前端单一来源，
+  // 保存时同步写入 indexing_strategy.graph_enabled 和 extract_config.enabled。
 
   // 添加问题生成配置
   if (formData.value.questionGenerationConfig?.enabled) {
@@ -908,19 +911,16 @@ const buildSubmitData = () => {
       vector_enabled: formData.value.indexingStrategy?.vectorEnabled ?? true,
       keyword_enabled: formData.value.indexingStrategy?.keywordEnabled ?? true,
       wiki_enabled: formData.value.indexingStrategy?.wikiEnabled ?? false,
-      graph_enabled: formData.value.indexingStrategy?.graphEnabled ?? false,
+      graph_enabled: graphExtractionEnabled,
     }
   }
 
-  // Sync extract_config.enabled from indexingStrategy.graphEnabled
-  if (formData.value.indexingStrategy?.graphEnabled && formData.value.nodeExtractConfig?.enabled) {
-    data.extract_config = {
-      enabled: true,
-      text: formData.value.nodeExtractConfig.text,
-      tags: formData.value.nodeExtractConfig.tags,
-      nodes: formData.value.nodeExtractConfig.nodes,
-      relations: formData.value.nodeExtractConfig.relations
-    }
+  data.extract_config = {
+    enabled: graphExtractionEnabled,
+    text: graphExtractionEnabled ? (formData.value.nodeExtractConfig.text || '') : '',
+    tags: graphExtractionEnabled ? (formData.value.nodeExtractConfig.tags || []) : [],
+    nodes: graphExtractionEnabled ? (formData.value.nodeExtractConfig.nodes || []) : [],
+    relations: graphExtractionEnabled ? (formData.value.nodeExtractConfig.relations || []) : []
   }
 
   return data
@@ -1001,7 +1001,7 @@ const doSubmit = async () => {
           vector_enabled: formData.value.indexingStrategy?.vectorEnabled ?? true,
           keyword_enabled: formData.value.indexingStrategy?.keywordEnabled ?? true,
           wiki_enabled: formData.value.indexingStrategy?.wikiEnabled ?? false,
-          graph_enabled: formData.value.indexingStrategy?.graphEnabled ?? false,
+          graph_enabled: !!formData.value.nodeExtractConfig?.enabled,
         }
       }
       await updateKnowledgeBase(props.kbId, {
@@ -1623,4 +1623,3 @@ watch(
   }
 }
 </style>
-

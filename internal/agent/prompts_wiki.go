@@ -27,8 +27,8 @@ const WikiSummaryPrompt = `You are a wiki editor. Given the following document c
 4. Use proper heading hierarchy (## for sections, ### for subsections).
 5. **Wiki-link rule**: The available_wiki_pages list above maps slugs to display names and their aliases (format: "[[slug]] = display name (Aliases: a, b)"). Whenever you mention a name or alias that matches a listed entry, you MUST write it as [[slug|display name]] (e.g. [[entity/zhong-guo|中国]]), NOT as bold (**name**) or bare [[slug]]. Use the EXACT slugs provided — do NOT invent new slugs.
 6. **Image rule**: If the document contains <images> tags with <image> elements, you SHOULD include the relevant images in your summary using the Markdown syntax: ![caption](url). Place the images where they are contextually relevant to the text.
-7. At the end, include a "## Key Takeaways" section with bullet points.
-8. Write in {{.Language}}.
+7. At the end, include a "## 关键要点" section with bullet points.
+8. Write in {{.Language}}. Translate source facts into {{.Language}} even when the source document is written in another language. Do not write English prose unless it is a proper noun, code identifier, URL, or quoted source term.
 9. Keep the summary concise but thorough (500-1500 words depending on document length).
 </instructions>
 
@@ -52,7 +52,7 @@ const WikiKnowledgeExtractPrompt = `You are a knowledge extraction system. Analy
 
 <instructions>
 Return a JSON object with two arrays: "entities" and "concepts".
-**IMPORTANT: Write ALL names, descriptions, and details in {{.Language}}**.
+**IMPORTANT: Write ALL names, descriptions, and details in {{.Language}}. Translate source facts into {{.Language}} even when the source document is written in another language. Do not write English prose unless it is a proper noun, code identifier, URL, or quoted source term.**
 
 ### Slug Continuity Rules
 If previous slugs are provided above, you MUST follow these rules:
@@ -133,7 +133,7 @@ const WikiCandidateSlugPrompt = `You are a knowledge extraction system. Analyze 
 
 <instructions>
 Return a JSON object with two arrays: "entities" and "concepts".
-**IMPORTANT: Write ALL names, descriptions, and details in {{.Language}}**.
+**IMPORTANT: Write ALL names, descriptions, and details in {{.Language}}. Translate source facts into {{.Language}} even when the source document is written in another language. Do not write English prose unless it is a proper noun, code identifier, URL, or quoted source term.**
 
 ### Extraction Scope (Granularity: {{.Granularity}})
 {{.GranularityGuidance}}
@@ -213,7 +213,7 @@ const WikiChunkCitationPrompt = `You are a precise citation system. Your job is 
 </chunks>
 
 <instructions>
-**IMPORTANT: Write ALL names, descriptions, and details in {{.Language}}**.
+**IMPORTANT: Write ALL names, descriptions, and details in {{.Language}}. Translate source facts into {{.Language}} even when the source document is written in another language. Do not write English prose unless it is a proper noun, code identifier, URL, or quoted source term.**
 
 ### Primary task
 For each candidate slug above, select the chunk IDs (from the <chunks> block) that **substantively discuss** that entity/concept. "Substantively" means the chunk states at least one concrete fact, attribute, step, date, number, relationship, or other useful piece of information about the candidate — not a passing mention.
@@ -315,9 +315,9 @@ The <new_information> block above is assembled from VERBATIM source chunks that 
 6. Maintain the existing page structure and formatting style. Use "# {{.PageTitle}}" as the top-level heading if the page does not already have one. Do NOT introduce new heading levels beyond what the source or existing page justifies.
 7. **Image rule**: Include relevant images using Markdown syntax: ![caption](url) from new information if applicable.
 {{if .HasRetractions}}
-8. If after removing deleted content the page becomes nearly empty and there is no new information to add, output just: "SUMMARY: (empty page)\n# {{.PageTitle}}\n\n*This page's primary source document was removed.*"
+8. If after removing deleted content the page becomes nearly empty and there is no new information to add, output just: "SUMMARY: 空页面\n# {{.PageTitle}}\n\n*此页面的主要来源文档已被移除。*"
 {{end}}
-9. Write in {{.Language}}.
+9. Write in {{.Language}}. Translate source facts into {{.Language}} even when the source document is written in another language. Do not write English prose unless it is a proper noun, code identifier, URL, or quoted source term.
 </instructions>
 
 Output the SUMMARY line first, then the updated Markdown content. Do not include any other preamble.`
@@ -333,7 +333,7 @@ const WikiIndexIntroPrompt = `You are a wiki editor. Write a brief introduction 
 1. Write a title line starting with "# " that reflects the knowledge domain.
 2. Follow with 2-3 sentences describing what this wiki covers, based on the document summaries above.
 3. Keep it concise — this is just the header section, the directory listing will be added separately below.
-4. Write in {{.Language}}.
+4. Write in {{.Language}}. Translate source facts into {{.Language}} even when the source summaries are written in another language.
 </instructions>
 
 Output ONLY the title and introduction paragraph. Do NOT generate any directory listings or page links.`
@@ -359,16 +359,16 @@ const WikiIndexIntroUpdatePrompt = `You are a wiki editor. Update the introducti
 3. If documents were removed, remove references to those topics if they no longer apply.
 4. Keep the same tone, style, and title format as the existing introduction.
 5. Keep it concise — 1 title line + 2-3 sentences.
-6. Write in {{.Language}}.
+6. Write in {{.Language}}. Translate source facts into {{.Language}} even when the source summaries are written in another language.
 </instructions>
 
 Output ONLY the updated title and introduction paragraph. Do NOT generate any directory listings or page links.`
 
 // WikiLogEntryTemplate is a simple template for log entries (not LLM-generated).
 const WikiLogEntryTemplate = `## [{{.Date}}] {{.Operation}} | {{.Title}}
-- **Source**: {{.SourceInfo}}
-- **Pages affected**: {{.PagesAffected}}
-- **Summary**: {{.Summary}}
+- **来源**: {{.SourceInfo}}
+- **影响页面**: {{.PagesAffected}}
+- **摘要**: {{.Summary}}
 `
 
 // WikiDeduplicationPrompt asks the LLM to identify duplicate entities/concepts

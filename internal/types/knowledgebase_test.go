@@ -93,10 +93,10 @@ func TestKnowledgeBase_VectorStoreID_JSON(t *testing.T) {
 	})
 
 	unmarshalCases := []struct {
-		name       string
-		body       string
-		wantNil    bool
-		wantValue  string
+		name      string
+		body      string
+		wantNil   bool
+		wantValue string
 	}{
 		{name: "missing field", body: `{"id":"kb-1"}`, wantNil: true},
 		{name: "explicit null", body: `{"id":"kb-1","vector_store_id":null}`, wantNil: true},
@@ -156,3 +156,44 @@ func TestKnowledgeBase_UnmarshalJSON_WithVectorStoreID(t *testing.T) {
 	// If a future change introduces such a shadow, the value above would fail to populate.
 }
 
+func TestKnowledgeBaseEnsureDefaultsSyncsGraphExtractionFlags(t *testing.T) {
+	t.Run("legacy extract config enables indexing strategy", func(t *testing.T) {
+		kb := &KnowledgeBase{
+			Type:          KnowledgeBaseTypeDocument,
+			ExtractConfig: &ExtractConfig{Enabled: true},
+		}
+		kb.EnsureDefaults()
+
+		if !kb.IndexingStrategy.GraphEnabled {
+			t.Fatal("expected graph indexing to be enabled from extract_config.enabled")
+		}
+		if kb.ExtractConfig == nil || !kb.ExtractConfig.Enabled {
+			t.Fatal("expected extract_config.enabled to remain enabled")
+		}
+	})
+
+	t.Run("indexing strategy backfills missing extract config", func(t *testing.T) {
+		kb := &KnowledgeBase{
+			Type:             KnowledgeBaseTypeDocument,
+			IndexingStrategy: IndexingStrategy{GraphEnabled: true},
+		}
+		kb.EnsureDefaults()
+
+		if kb.ExtractConfig == nil || !kb.ExtractConfig.Enabled {
+			t.Fatal("expected extract_config.enabled to be backfilled from graph indexing")
+		}
+	})
+
+	t.Run("indexing strategy wins over stale disabled extract config", func(t *testing.T) {
+		kb := &KnowledgeBase{
+			Type:             KnowledgeBaseTypeDocument,
+			IndexingStrategy: IndexingStrategy{GraphEnabled: true},
+			ExtractConfig:    &ExtractConfig{Enabled: false},
+		}
+		kb.EnsureDefaults()
+
+		if kb.ExtractConfig == nil || !kb.ExtractConfig.Enabled {
+			t.Fatal("expected stale extract_config.enabled=false to be corrected")
+		}
+	})
+}

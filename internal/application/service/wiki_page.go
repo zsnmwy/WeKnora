@@ -237,8 +237,8 @@ func (s *wikiPageService) GetIndex(ctx context.Context, kbID string) (*types.Wik
 	if err != nil {
 		if errors.Is(err, repository.ErrWikiPageNotFound) {
 			// Create default index page
-			return s.createDefaultPage(ctx, kbID, "index", "Index", types.WikiPageTypeIndex,
-				"# Wiki Index\n\nThis is the index page. It will be automatically updated as pages are added.\n")
+			return s.createDefaultPage(ctx, kbID, "index", "Wiki 索引", types.WikiPageTypeIndex,
+				"# Wiki 索引\n\n这是索引页，会随着页面增加自动更新。\n")
 		}
 		return nil, err
 	}
@@ -250,8 +250,8 @@ func (s *wikiPageService) GetLog(ctx context.Context, kbID string) (*types.WikiP
 	page, err := s.repo.GetBySlug(ctx, kbID, "log")
 	if err != nil {
 		if errors.Is(err, repository.ErrWikiPageNotFound) {
-			return s.createDefaultPage(ctx, kbID, "log", "Log", types.WikiPageTypeLog,
-				"# Wiki Operation Log\n\nChronological record of wiki operations.\n")
+			return s.createDefaultPage(ctx, kbID, "log", "操作日志", types.WikiPageTypeLog,
+				"# Wiki 操作日志\n\n按时间顺序记录 Wiki 操作。\n")
 		}
 		return nil, err
 	}
@@ -629,9 +629,9 @@ func (s *wikiPageService) RebuildIndexPage(ctx context.Context, kbID string) err
 		types.WikiPageTypeSynthesis, types.WikiPageTypeComparison,
 	}
 	typeLabels := map[string]string{
-		types.WikiPageTypeSummary: "Summary", types.WikiPageTypeEntity: "Entity",
-		types.WikiPageTypeConcept: "Concept", types.WikiPageTypeSynthesis: "Synthesis",
-		types.WikiPageTypeComparison: "Comparison",
+		types.WikiPageTypeSummary: "文档摘要", types.WikiPageTypeEntity: "实体",
+		types.WikiPageTypeConcept: "概念", types.WikiPageTypeSynthesis: "综合分析",
+		types.WikiPageTypeComparison: "对比",
 	}
 
 	grouped := make(map[string][]*types.WikiPage)
@@ -675,12 +675,12 @@ func (s *wikiPageService) RebuildIndexPage(ctx context.Context, kbID string) err
 		}
 	}
 	if totalPages == 0 {
-		dir.WriteString("\n*No wiki pages yet. Upload documents to get started.*\n")
+		dir.WriteString("\n*暂无 Wiki 页面。上传文档后会自动生成内容。*\n")
 	}
 
 	intro := indexPage.Summary
 	if intro == "" {
-		intro = "# Wiki Index\n\nThis wiki contains knowledge extracted from uploaded documents.\n"
+		intro = "# Wiki 索引\n\n这个 Wiki 汇总了从已上传文档中提取的知识。\n"
 		indexPage.Summary = intro
 	}
 

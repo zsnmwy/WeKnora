@@ -79,7 +79,16 @@ const (
 	// tick (GC pause, Redis blip) doesn't let the lock slip out from under a
 	// live handler.
 	wikiActiveLockRenew = 20 * time.Second
+
+	// Wiki generation is a knowledge-base artifact, not a UI-locale response.
+	// Keep generated pages stable in Simplified Chinese regardless of browser
+	// Accept-Language or queued task history.
+	wikiGenerationLanguageLocale = "zh-CN"
 )
+
+func wikiGenerationPromptLanguage() string {
+	return "简体中文"
+}
 
 // WikiDeletedTombstoneKey returns the Redis key used to mark a knowledge as
 // recently deleted, so wiki_ingest tasks in flight can short-circuit. Exposed
@@ -183,12 +192,10 @@ func NewWikiIngestService(
 //
 // In Lite mode (no Redis), falls back to immediate per-document execution.
 func EnqueueWikiIngest(ctx context.Context, task interfaces.TaskEnqueuer, redisClient *redis.Client, tenantID uint64, kbID, knowledgeID string) {
-	lang, _ := types.LanguageFromContext(ctx)
-
 	payload := WikiIngestPayload{
 		TenantID:        tenantID,
 		KnowledgeBaseID: kbID,
-		Language:        lang,
+		Language:        wikiGenerationLanguageLocale,
 	}
 
 	// Push to Redis pending list (if Redis available)
@@ -197,7 +204,7 @@ func EnqueueWikiIngest(ctx context.Context, task interfaces.TaskEnqueuer, redisC
 		op := WikiPendingOp{
 			Op:          WikiOpIngest,
 			KnowledgeID: knowledgeID,
-			Language:    lang,
+			Language:    wikiGenerationLanguageLocale,
 		}
 		opBytes, _ := json.Marshal(op)
 		redisClient.RPush(ctx, pendingKey, string(opBytes))
@@ -207,7 +214,7 @@ func EnqueueWikiIngest(ctx context.Context, task interfaces.TaskEnqueuer, redisC
 		payload.LiteOps = []WikiPendingOp{{
 			Op:          WikiOpIngest,
 			KnowledgeID: knowledgeID,
-			Language:    lang,
+			Language:    wikiGenerationLanguageLocale,
 		}}
 	}
 
@@ -227,10 +234,11 @@ func EnqueueWikiIngest(ctx context.Context, task interfaces.TaskEnqueuer, redisC
 
 // EnqueueWikiRetract enqueues an async wiki content retraction task
 func EnqueueWikiRetract(ctx context.Context, task interfaces.TaskEnqueuer, redisClient *redis.Client, payload WikiRetractPayload) {
+	payload.Language = wikiGenerationLanguageLocale
 	ingestPayload := WikiIngestPayload{
 		TenantID:        payload.TenantID,
 		KnowledgeBaseID: payload.KnowledgeBaseID,
-		Language:        payload.Language,
+		Language:        wikiGenerationLanguageLocale,
 	}
 
 	op := WikiPendingOp{
@@ -239,7 +247,7 @@ func EnqueueWikiRetract(ctx context.Context, task interfaces.TaskEnqueuer, redis
 		DocTitle:    payload.DocTitle,
 		DocSummary:  payload.DocSummary,
 		PageSlugs:   payload.PageSlugs,
-		Language:    payload.Language,
+		Language:    wikiGenerationLanguageLocale,
 	}
 
 	if redisClient != nil {
@@ -629,9 +637,9 @@ func (s *wikiIngestService) rebuildIndexPage(ctx context.Context, chatModel chat
 		types.WikiPageTypeSynthesis, types.WikiPageTypeComparison,
 	}
 	typeLabels := map[string]string{
-		types.WikiPageTypeSummary: "Summary", types.WikiPageTypeEntity: "Entity",
-		types.WikiPageTypeConcept: "Concept", types.WikiPageTypeSynthesis: "Synthesis",
-		types.WikiPageTypeComparison: "Comparison",
+		types.WikiPageTypeSummary: "文档摘要", types.WikiPageTypeEntity: "实体",
+		types.WikiPageTypeConcept: "概念", types.WikiPageTypeSynthesis: "综合分析",
+		types.WikiPageTypeComparison: "对比",
 	}
 
 	grouped := make(map[string][]*types.WikiPage)
@@ -667,7 +675,7 @@ func (s *wikiIngestService) rebuildIndexPage(ctx context.Context, chatModel chat
 			"Language":          lang,
 		})
 		if genErr != nil {
-			intro = "# Wiki Index\n\nThis wiki contains knowledge extracted from uploaded documents.\n"
+			intro = "# Wiki 索引\n\n这个 Wiki 汇总了从已上传文档中提取的知识。\n"
 		} else {
 			intro = strings.TrimSpace(generatedIntro)
 		}
@@ -718,7 +726,7 @@ func (s *wikiIngestService) rebuildIndexPage(ctx context.Context, chatModel chat
 		}
 	}
 	if totalPages == 0 {
-		dir.WriteString("\n*No wiki pages yet. Upload documents to get started.*\n")
+		dir.WriteString("\n*暂无 Wiki 页面。上传文档后会自动生成内容。*\n")
 	}
 
 	indexPage.Content = intro + "\n" + dir.String()
@@ -745,6 +753,17 @@ func splitSummaryLine(raw string) (summary string, content string) {
 	return "", raw
 }
 
+func wikiLogActionLabel(action string) string {
+	switch action {
+	case "ingest":
+		return "写入"
+	case "retract":
+		return "移除"
+	default:
+		return action
+	}
+}
+
 // appendLogEntry appends a structured, grep-parseable entry to the log page.
 // Format: ## [2026-04-07 19:50:02] action | title
 // Followed by key-value metadata lines. No sub-headings — keeps `grep "^## \[" log.md` clean.
@@ -757,17 +776,17 @@ func (s *wikiIngestService) appendLogEntry(ctx context.Context, kbID string, act
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "\n## [%s] %s | %s\n",
 		time.Now().Format("2006-01-02 15:04:05"),
-		action,
+		wikiLogActionLabel(action),
 		docTitle,
 	)
 	if knowledgeID != "" {
-		fmt.Fprintf(&sb, "- **KnowledgeID**: %s\n", knowledgeID)
+		fmt.Fprintf(&sb, "- **知识ID**: %s\n", knowledgeID)
 	}
 	if summary != "" {
-		fmt.Fprintf(&sb, "- **Summary**: %s\n", summary)
+		fmt.Fprintf(&sb, "- **摘要**: %s\n", summary)
 	}
 	if len(pagesAffected) > 0 {
-		fmt.Fprintf(&sb, "- **Pages affected**: %d (%s)\n", len(pagesAffected), strings.Join(pagesAffected, ", "))
+		fmt.Fprintf(&sb, "- **影响页面**: %d (%s)\n", len(pagesAffected), strings.Join(pagesAffected, ", "))
 	}
 
 	logPage.Content = logPage.Content + sb.String()

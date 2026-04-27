@@ -97,11 +97,11 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 		return fmt.Errorf("wiki ingest: unmarshal payload: %w", err)
 	}
 
-	// Inject context
+	// Inject context. Wiki generation is fixed to Simplified Chinese so queued
+	// jobs created from English UI/browser sessions cannot drift language.
 	ctx = context.WithValue(ctx, types.TenantIDContextKey, payload.TenantID)
-	if payload.Language != "" {
-		ctx = context.WithValue(ctx, types.LanguageContextKey, payload.Language)
-	}
+	payload.Language = wikiGenerationLanguageLocale
+	ctx = context.WithValue(ctx, types.LanguageContextKey, wikiGenerationLanguageLocale)
 
 	// Try to acquire the "active batch" flag (non-blocking).
 	//
@@ -171,7 +171,7 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 		return fmt.Errorf("wiki ingest: get chat model: %w", err)
 	}
 
-	lang := types.LanguageNameFromContext(ctx)
+	lang := wikiGenerationPromptLanguage()
 
 	pendingOps, peekedCount := s.peekPendingList(ctx, payload.KnowledgeBaseID)
 	pendingOpsCount = len(pendingOps)
@@ -293,7 +293,7 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 						RetractDocContent: op.DocSummary,
 						DocTitle:          op.DocTitle,
 						KnowledgeID:       op.KnowledgeID,
-						Language:          op.Language,
+						Language:          wikiGenerationPromptLanguage(),
 					})
 				}
 				mapMu.Unlock()
@@ -428,7 +428,7 @@ func (s *wikiIngestService) mapOneDocument(
 ) (*docIngestResult, []SlugUpdate, error) {
 	docStartedAt := time.Now()
 	knowledgeID := op.KnowledgeID
-	lang := op.Language
+	lang := wikiGenerationPromptLanguage()
 
 	// Guard against the ingest/delete race: if the user deleted the doc while
 	// this task was queued (wikiIngestDelay = 30s) or while an earlier stage
@@ -865,7 +865,7 @@ func (s *wikiIngestService) reduceSlugUpdates(
 	}
 
 	if summaryUpdate != nil {
-		page.Title = summaryUpdate.DocTitle + " - Summary"
+		page.Title = summaryUpdate.DocTitle + " - 摘要"
 		page.Content = summaryUpdate.SummaryBody
 		page.Summary = summaryUpdate.SummaryLine
 		page.PageType = types.WikiPageTypeSummary

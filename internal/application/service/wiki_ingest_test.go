@@ -19,8 +19,8 @@ func TestSlugify(t *testing.T) {
 		{"Special!@#Chars", "specialchars"},
 		{"CamelCase", "camelcase"},
 		{"", ""},
-		{"a/b/c", "a/b/c"},            // preserve slashes for hierarchical slugs
-		{"中文标题", "中文标题"},          // preserve CJK
+		{"a/b/c", "a/b/c"},               // preserve slashes for hierarchical slugs
+		{"中文标题", "中文标题"},                 // preserve CJK
 		{"Mix 中英文 Test", "mix-中英文-test"}, // mixed
 	}
 
@@ -71,6 +71,15 @@ func TestAppendUnique(t *testing.T) {
 	result = appendUnique(result, "b")
 	if len(result) != 3 {
 		t.Errorf("Expected 3 items (no dup), got %d", len(result))
+	}
+}
+
+func TestWikiGenerationLanguageIsFixedSimplifiedChinese(t *testing.T) {
+	if wikiGenerationLanguageLocale != "zh-CN" {
+		t.Fatalf("expected wiki generation locale zh-CN, got %q", wikiGenerationLanguageLocale)
+	}
+	if got := wikiGenerationPromptLanguage(); got != "简体中文" {
+		t.Fatalf("expected wiki prompt language 简体中文, got %q", got)
 	}
 }
 

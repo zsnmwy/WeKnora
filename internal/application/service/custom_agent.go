@@ -24,10 +24,13 @@ var (
 
 // customAgentService implements the CustomAgentService interface
 type customAgentService struct {
-	repo         interfaces.CustomAgentRepository
-	chunkRepo    interfaces.ChunkRepository
-	kbService    interfaces.KnowledgeBaseService
-	wikiPageRepo interfaces.WikiPageRepository
+	repo              interfaces.CustomAgentRepository
+	chunkRepo         interfaces.ChunkRepository
+	kbService         interfaces.KnowledgeBaseService
+	wikiPageRepo      interfaces.WikiPageRepository
+	kbShareService    interfaces.KBShareService
+	agentShareService interfaces.AgentShareService
+	knowledgeService  interfaces.KnowledgeService
 }
 
 // NewCustomAgentService creates a new custom agent service
@@ -36,12 +39,18 @@ func NewCustomAgentService(
 	chunkRepo interfaces.ChunkRepository,
 	kbService interfaces.KnowledgeBaseService,
 	wikiPageRepo interfaces.WikiPageRepository,
+	kbShareService interfaces.KBShareService,
+	agentShareService interfaces.AgentShareService,
+	knowledgeService interfaces.KnowledgeService,
 ) interfaces.CustomAgentService {
 	return &customAgentService{
-		repo:         repo,
-		chunkRepo:    chunkRepo,
-		kbService:    kbService,
-		wikiPageRepo: wikiPageRepo,
+		repo:              repo,
+		chunkRepo:         chunkRepo,
+		kbService:         kbService,
+		wikiPageRepo:      wikiPageRepo,
+		kbShareService:    kbShareService,
+		agentShareService: agentShareService,
+		knowledgeService:  knowledgeService,
 	}
 }
 
@@ -442,8 +451,9 @@ func (s *customAgentService) GetSuggestedQuestions(
 		return nil, ErrInvalidTenantID
 	}
 
-	// Get agent configuration
-	agent, err := s.GetAgentByID(ctx, agentID)
+	// Get agent configuration. For shared agents, resolve through the user's
+	// organization share so suggestions use the source tenant's KB scope.
+	agent, isSharedAgent, err := s.getAgentForSuggestions(ctx, agentID, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -469,17 +479,7 @@ func (s *customAgentService) GetSuggestedQuestions(
 		// Use agent's KB configuration
 		switch agent.Config.KBSelectionMode {
 		case "all":
-			kbs, err := s.kbService.ListKnowledgeBases(ctx)
-			if err != nil {
-				logger.ErrorWithFields(ctx, err, map[string]interface{}{
-					"agent_id": agentID,
-				})
-				// Return what we have so far (agent_config suggestions)
-				return s.truncateQuestions(result, limit), nil
-			}
-			for _, kb := range kbs {
-				effectiveKBIDs = append(effectiveKBIDs, kb.ID)
-			}
+			effectiveKBIDs = s.listAllAgentKBIDsForSuggestions(ctx, agent, tenantID, isSharedAgent)
 		case "selected":
 			effectiveKBIDs = agent.Config.KnowledgeBases
 		case "none":
@@ -492,6 +492,11 @@ func (s *customAgentService) GetSuggestedQuestions(
 	}
 
 	if len(effectiveKBIDs) == 0 && len(knowledgeIDs) == 0 {
+		return s.truncateQuestions(result, limit), nil
+	}
+
+	scopes := s.buildSuggestionScopes(ctx, tenantID, agent, isSharedAgent, effectiveKBIDs, knowledgeIDs)
+	if len(scopes) == 0 {
 		return s.truncateQuestions(result, limit), nil
 	}
 
@@ -511,10 +516,6 @@ func (s *customAgentService) GetSuggestedQuestions(
 	//    knowledgeID -> list of questions
 	buckets := make(map[string][]types.SuggestedQuestion)
 
-	// Determine query scope
-	queryKBIDs := effectiveKBIDs
-	queryKnowledgeIDs := knowledgeIDs
-
 	// Fetch a large pool so DB-level random sampling covers multiple documents.
 	fetchLimit := remaining * 5
 	if fetchLimit < 20 {
@@ -522,12 +523,15 @@ func (s *customAgentService) GetSuggestedQuestions(
 	}
 
 	// Collect FAQ recommended chunks
-	faqChunks, err := s.chunkRepo.ListRecommendedFAQChunks(ctx, tenantID, queryKBIDs, queryKnowledgeIDs, fetchLimit)
-	if err != nil {
-		logger.ErrorWithFields(ctx, err, map[string]interface{}{
-			"agent_id": agentID,
-		})
-	} else {
+	for _, scope := range scopes {
+		faqChunks, err := s.chunkRepo.ListRecommendedFAQChunks(ctx, scope.tenantID, scope.kbIDs, scope.knowledgeIDs, fetchLimit)
+		if err != nil {
+			logger.ErrorWithFields(ctx, err, map[string]interface{}{
+				"agent_id":  agentID,
+				"tenant_id": scope.tenantID,
+			})
+			continue
+		}
 		for _, chunk := range faqChunks {
 			meta, err := chunk.FAQMetadata()
 			if err != nil || meta == nil || meta.StandardQuestion == "" {
@@ -546,12 +550,15 @@ func (s *customAgentService) GetSuggestedQuestions(
 	}
 
 	// Collect Document chunks with generated questions
-	docChunks, err := s.chunkRepo.ListRecentDocumentChunksWithQuestions(ctx, tenantID, queryKBIDs, queryKnowledgeIDs, fetchLimit)
-	if err != nil {
-		logger.ErrorWithFields(ctx, err, map[string]interface{}{
-			"agent_id": agentID,
-		})
-	} else {
+	for _, scope := range scopes {
+		docChunks, err := s.chunkRepo.ListRecentDocumentChunksWithQuestions(ctx, scope.tenantID, scope.kbIDs, scope.knowledgeIDs, fetchLimit)
+		if err != nil {
+			logger.ErrorWithFields(ctx, err, map[string]interface{}{
+				"agent_id":  agentID,
+				"tenant_id": scope.tenantID,
+			})
+			continue
+		}
 		for _, chunk := range docChunks {
 			meta, err := chunk.DocumentMetadata()
 			if err != nil || meta == nil || len(meta.GeneratedQuestions) == 0 {
@@ -575,13 +582,19 @@ func (s *customAgentService) GetSuggestedQuestions(
 	// when the KB does not need an embedding model). knowledge_id filter is
 	// intentionally ignored here because wiki pages are authored at the KB level
 	// and are not 1:1 with source knowledge items.
-	if len(queryKBIDs) > 0 && s.wikiPageRepo != nil {
-		wikiPages, err := s.wikiPageRepo.ListRecentForSuggestions(ctx, tenantID, queryKBIDs, fetchLimit)
-		if err != nil {
-			logger.ErrorWithFields(ctx, err, map[string]interface{}{
-				"agent_id": agentID,
-			})
-		} else {
+	if s.wikiPageRepo != nil {
+		for _, scope := range scopes {
+			if len(scope.kbIDs) == 0 {
+				continue
+			}
+			wikiPages, err := s.wikiPageRepo.ListRecentForSuggestions(ctx, scope.tenantID, scope.kbIDs, fetchLimit)
+			if err != nil {
+				logger.ErrorWithFields(ctx, err, map[string]interface{}{
+					"agent_id":  agentID,
+					"tenant_id": scope.tenantID,
+				})
+				continue
+			}
 			locale, _ := types.LanguageFromContext(ctx)
 			for _, page := range wikiPages {
 				q := wikiSuggestionFromPage(page, locale)
@@ -642,6 +655,251 @@ func (s *customAgentService) truncateQuestions(questions []types.SuggestedQuesti
 		return questions[:limit]
 	}
 	return questions
+}
+
+type suggestedQuestionScope struct {
+	tenantID     uint64
+	kbIDs        []string
+	knowledgeIDs []string
+}
+
+func (s *customAgentService) getAgentForSuggestions(
+	ctx context.Context,
+	agentID string,
+	currentTenantID uint64,
+) (*types.CustomAgent, bool, error) {
+	agent, err := s.GetAgentByID(ctx, agentID)
+	if err == nil {
+		return agent, false, nil
+	}
+	if !errors.Is(err, ErrAgentNotFound) {
+		return nil, false, err
+	}
+
+	userID, ok := types.UserIDFromContext(ctx)
+	if !ok || s.agentShareService == nil {
+		return nil, false, err
+	}
+	sharedAgent, sharedErr := s.agentShareService.GetSharedAgentForUser(ctx, userID, currentTenantID, agentID)
+	if sharedErr != nil {
+		return nil, false, err
+	}
+	logger.Infof(ctx, "Using shared agent for suggested questions: agent=%s source_tenant=%d", agentID, sharedAgent.TenantID)
+	return sharedAgent, true, nil
+}
+
+func (s *customAgentService) listAllAgentKBIDsForSuggestions(
+	ctx context.Context,
+	agent *types.CustomAgent,
+	currentTenantID uint64,
+	isSharedAgent bool,
+) []string {
+	if agent == nil {
+		return nil
+	}
+	kbIDSet := make(map[string]bool)
+	kbIDs := make([]string, 0)
+	addKBs := func(kbs []*types.KnowledgeBase) {
+		for _, kb := range kbs {
+			if kb == nil || kb.ID == "" || kbIDSet[kb.ID] {
+				continue
+			}
+			kbIDSet[kb.ID] = true
+			kbIDs = append(kbIDs, kb.ID)
+		}
+	}
+
+	if isSharedAgent {
+		kbs, err := s.kbService.ListKnowledgeBasesByTenantID(ctx, agent.TenantID)
+		if err != nil {
+			logger.Warnf(ctx, "Failed to list source tenant KBs for shared agent suggestions: agent=%s tenant=%d err=%v", agent.ID, agent.TenantID, err)
+			return nil
+		}
+		addKBs(kbs)
+		return kbIDs
+	}
+
+	kbs, err := s.kbService.ListKnowledgeBases(ctx)
+	if err != nil {
+		logger.Warnf(ctx, "Failed to list tenant KBs for suggested questions: agent=%s tenant=%d err=%v", agent.ID, currentTenantID, err)
+	} else {
+		addKBs(kbs)
+	}
+
+	userID, ok := types.UserIDFromContext(ctx)
+	if ok && s.kbShareService != nil {
+		sharedList, err := s.kbShareService.ListSharedKnowledgeBases(ctx, userID, currentTenantID)
+		if err != nil {
+			logger.Warnf(ctx, "Failed to list shared KBs for suggested questions: user=%s tenant=%d err=%v", userID, currentTenantID, err)
+		} else {
+			for _, info := range sharedList {
+				if info == nil || info.KnowledgeBase == nil || info.KnowledgeBase.ID == "" || kbIDSet[info.KnowledgeBase.ID] {
+					continue
+				}
+				kbIDSet[info.KnowledgeBase.ID] = true
+				kbIDs = append(kbIDs, info.KnowledgeBase.ID)
+			}
+		}
+	}
+
+	return kbIDs
+}
+
+func (s *customAgentService) buildSuggestionScopes(
+	ctx context.Context,
+	currentTenantID uint64,
+	agent *types.CustomAgent,
+	isSharedAgent bool,
+	kbIDs []string,
+	knowledgeIDs []string,
+) []suggestedQuestionScope {
+	scopeByTenant := make(map[uint64]*suggestedQuestionScope)
+	getScope := func(tenantID uint64) *suggestedQuestionScope {
+		scope := scopeByTenant[tenantID]
+		if scope == nil {
+			scope = &suggestedQuestionScope{tenantID: tenantID}
+			scopeByTenant[tenantID] = scope
+		}
+		return scope
+	}
+
+	userID, _ := types.UserIDFromContext(ctx)
+	kbCache := make(map[string]*types.KnowledgeBase)
+	if len(kbIDs) > 0 {
+		kbs, err := s.kbService.GetKnowledgeBasesByIDsOnly(ctx, kbIDs)
+		if err != nil {
+			logger.Warnf(ctx, "Failed to resolve KBs for suggested questions: %v", err)
+		}
+		for _, kb := range kbs {
+			if kb != nil {
+				kbCache[kb.ID] = kb
+			}
+		}
+	}
+
+	addKB := func(kb *types.KnowledgeBase) {
+		if !s.canUseKBForSuggestions(ctx, currentTenantID, userID, agent, isSharedAgent, kb) {
+			return
+		}
+		scope := getScope(kb.TenantID)
+		if !containsString(scope.kbIDs, kb.ID) {
+			scope.kbIDs = append(scope.kbIDs, kb.ID)
+		}
+	}
+
+	for _, kbID := range kbIDs {
+		kbID = strings.TrimSpace(kbID)
+		if kbID == "" {
+			continue
+		}
+		kb := kbCache[kbID]
+		if kb == nil {
+			var err error
+			kb, err = s.kbService.GetKnowledgeBaseByIDOnly(ctx, kbID)
+			if err != nil {
+				logger.Warnf(ctx, "Skipping suggested questions for unresolved KB %s: %v", kbID, err)
+				continue
+			}
+		}
+		addKB(kb)
+	}
+
+	if len(knowledgeIDs) > 0 && s.knowledgeService != nil {
+		knowledgeKBs := make(map[string]*types.KnowledgeBase)
+		for _, knowledgeID := range knowledgeIDs {
+			knowledgeID = strings.TrimSpace(knowledgeID)
+			if knowledgeID == "" {
+				continue
+			}
+			knowledge, err := s.knowledgeService.GetKnowledgeByIDOnly(ctx, knowledgeID)
+			if err != nil || knowledge == nil {
+				logger.Warnf(ctx, "Skipping suggested questions for unresolved knowledge %s: %v", knowledgeID, err)
+				continue
+			}
+			kb := knowledgeKBs[knowledge.KnowledgeBaseID]
+			if kb == nil {
+				kb = kbCache[knowledge.KnowledgeBaseID]
+			}
+			if kb == nil {
+				kb, err = s.kbService.GetKnowledgeBaseByIDOnly(ctx, knowledge.KnowledgeBaseID)
+				if err != nil {
+					logger.Warnf(ctx, "Skipping suggested questions for knowledge %s with unresolved KB %s: %v", knowledge.ID, knowledge.KnowledgeBaseID, err)
+					continue
+				}
+				knowledgeKBs[knowledge.KnowledgeBaseID] = kb
+			}
+			if !s.canUseKBForSuggestions(ctx, currentTenantID, userID, agent, isSharedAgent, kb) {
+				continue
+			}
+			scope := getScope(knowledge.TenantID)
+			if !containsString(scope.knowledgeIDs, knowledge.ID) {
+				scope.knowledgeIDs = append(scope.knowledgeIDs, knowledge.ID)
+			}
+		}
+	}
+
+	scopes := make([]suggestedQuestionScope, 0, len(scopeByTenant))
+	for _, scope := range scopeByTenant {
+		if len(scope.kbIDs) == 0 && len(scope.knowledgeIDs) == 0 {
+			continue
+		}
+		scopes = append(scopes, *scope)
+	}
+	return scopes
+}
+
+func (s *customAgentService) canUseKBForSuggestions(
+	ctx context.Context,
+	currentTenantID uint64,
+	userID string,
+	agent *types.CustomAgent,
+	isSharedAgent bool,
+	kb *types.KnowledgeBase,
+) bool {
+	if kb == nil || kb.ID == "" {
+		return false
+	}
+	if isSharedAgent {
+		return agentAllowsKB(agent, kb)
+	}
+	if kb.TenantID == currentTenantID {
+		return true
+	}
+	if userID == "" || s.kbShareService == nil {
+		return false
+	}
+	hasAccess, err := s.kbShareService.HasKBPermission(ctx, kb.ID, userID, types.OrgRoleViewer)
+	if err != nil {
+		logger.Warnf(ctx, "Failed to check shared KB permission for suggestions: kb=%s user=%s err=%v", kb.ID, userID, err)
+		return false
+	}
+	return hasAccess
+}
+
+func agentAllowsKB(agent *types.CustomAgent, kb *types.KnowledgeBase) bool {
+	if agent == nil || kb == nil || kb.TenantID != agent.TenantID {
+		return false
+	}
+	switch agent.Config.KBSelectionMode {
+	case "all":
+		return true
+	case "none":
+		return false
+	case "selected", "":
+		for _, id := range agent.Config.KnowledgeBases {
+			if id == kb.ID {
+				return true
+			}
+		}
+		return false
+	default:
+		for _, id := range agent.Config.KnowledgeBases {
+			if id == kb.ID {
+				return true
+			}
+		}
+		return false
+	}
 }
 
 // wikiSuggestionFromPage converts a wiki page into a human-readable suggested
