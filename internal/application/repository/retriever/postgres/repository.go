@@ -21,6 +21,8 @@ type pgRepository struct {
 	db *gorm.DB // Database connection
 }
 
+var _ interfaces.EmbeddingCacheRepository = (*pgRepository)(nil)
+
 // NewPostgresRetrieveEngineRepository creates a new PostgreSQL retriever repository
 func NewPostgresRetrieveEngineRepository(db *gorm.DB) interfaces.RetrieveEngineRepository {
 	logger.GetLogger(context.Background()).Info("[Postgres] Initializing PostgreSQL retriever engine repository")
@@ -104,6 +106,96 @@ func (g *pgRepository) BatchSave(
 		return err
 	}
 	logger.GetLogger(ctx).Infof("[Postgres] Successfully batch saved %d indices", len(indexInfoList))
+	return nil
+}
+
+// FindEmbeddingCache returns reusable embeddings for the exact model/dimension/input hash tuple.
+func (g *pgRepository) FindEmbeddingCache(
+	ctx context.Context,
+	modelID string,
+	modelName string,
+	dimension int,
+	inputHashes []string,
+) (map[string][]float32, error) {
+	result := make(map[string][]float32)
+	if len(inputHashes) == 0 {
+		return result, nil
+	}
+
+	var rows []pgEmbeddingCache
+	if err := g.db.WithContext(ctx).
+		Where("model_id = ? AND model_name = ? AND dimension = ? AND input_hash IN ?",
+			modelID, modelName, dimension, inputHashes,
+		).
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+
+	for _, row := range rows {
+		result[row.InputHash] = row.Embedding.Slice()
+	}
+	if len(result) > 0 {
+		if err := g.db.WithContext(ctx).
+			Model(&pgEmbeddingCache{}).
+			Where("model_id = ? AND model_name = ? AND dimension = ? AND input_hash IN ?",
+				modelID, modelName, dimension, inputHashes,
+			).
+			Updates(map[string]any{
+				"last_used_at":    gorm.Expr("CURRENT_TIMESTAMP"),
+				"reuse_hit_count": gorm.Expr("reuse_hit_count + 1"),
+			}).Error; err != nil {
+			logger.GetLogger(ctx).Warnf("[Postgres] Failed to update embedding cache usage stats: %v", err)
+		}
+	}
+	return result, nil
+}
+
+// SaveEmbeddingCache stores reusable embeddings independently from live index rows.
+func (g *pgRepository) SaveEmbeddingCache(
+	ctx context.Context,
+	modelID string,
+	modelName string,
+	dimension int,
+	embeddings map[string][]float32,
+) error {
+	if len(embeddings) == 0 {
+		return nil
+	}
+
+	rows := make([]*pgEmbeddingCache, 0, len(embeddings))
+	for inputHash, embedding := range embeddings {
+		if inputHash == "" || len(embedding) == 0 {
+			continue
+		}
+		rows = append(rows, &pgEmbeddingCache{
+			ModelID:   modelID,
+			ModelName: modelName,
+			Dimension: dimension,
+			InputHash: inputHash,
+			Embedding: pgvector.NewHalfVector(embedding),
+		})
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+
+	err := g.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns: []clause.Column{
+			{Name: "model_id"},
+			{Name: "model_name"},
+			{Name: "dimension"},
+			{Name: "input_hash"},
+		},
+		DoUpdates: clause.Assignments(map[string]any{
+			"updated_at": gorm.Expr("CURRENT_TIMESTAMP"),
+			"embedding":  gorm.Expr("EXCLUDED.embedding"),
+		}),
+	}).CreateInBatches(rows, 100).Error
+	if err != nil {
+		logger.GetLogger(ctx).Errorf("[Postgres] Failed to save embedding cache: %v", err)
+		return err
+	}
+	logger.GetLogger(ctx).Infof("[Postgres] Saved %d reusable embeddings to cache", len(rows))
 	return nil
 }
 

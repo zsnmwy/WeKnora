@@ -2,6 +2,9 @@ package retriever
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"slices"
 	"time"
 
@@ -48,11 +51,11 @@ func (v *KeywordsVectorHybridRetrieveEngineService) Index(ctx context.Context,
 	params := make(map[string]any)
 	embeddingMap := make(map[string][]float32)
 	if slices.Contains(retrieverTypes, types.VectorRetrieverType) {
-		embedding, err := embedder.Embed(ctx, indexInfo.Content)
+		var err error
+		embeddingMap, err = v.buildEmbeddingMap(ctx, embedder, []*types.IndexInfo{indexInfo})
 		if err != nil {
 			return err
 		}
-		embeddingMap[indexInfo.SourceID] = embedding
 	}
 	params["embedding"] = embeddingMap
 	return v.indexRepository.Save(ctx, indexInfo, params)
@@ -68,23 +71,18 @@ func (v *KeywordsVectorHybridRetrieveEngineService) BatchIndex(ctx context.Conte
 	}
 
 	if slices.Contains(retrieverTypes, types.VectorRetrieverType) {
-		var contentList []string
-		for _, indexInfo := range indexInfoList {
-			contentList = append(contentList, indexInfo.Content)
-		}
-		var embeddings [][]float32
-		var err error
-		for range 5 {
-			embeddings, err = embedder.BatchEmbedWithPool(ctx, embedder, contentList)
-			if err == nil {
-				break
-			} else {
-				logger.Errorf(ctx, "BatchEmbedWithPool failed: %v", err)
-				time.Sleep(100 * time.Millisecond)
-			}
-		}
+		embeddingMap, err := v.buildEmbeddingMap(ctx, embedder, indexInfoList)
 		if err != nil {
 			return err
+		}
+
+		embeddings := make([][]float32, len(indexInfoList))
+		for i, indexInfo := range indexInfoList {
+			embedding, exists := embeddingMap[indexInfo.SourceID]
+			if !exists || len(embedding) == 0 {
+				return fmt.Errorf("embedding missing for source id %s", indexInfo.SourceID)
+			}
+			embeddings[i] = embedding
 		}
 
 		batchSize := 40
@@ -109,6 +107,115 @@ func (v *KeywordsVectorHybridRetrieveEngineService) BatchIndex(ctx context.Conte
 		return v.concurrentBatchSaveNoEmbedding(ctx, chunks)
 	}
 	return v.boundedConcurrentBatchSaveNoEmbedding(ctx, chunks, maxConcurrency)
+}
+
+func (v *KeywordsVectorHybridRetrieveEngineService) buildEmbeddingMap(
+	ctx context.Context,
+	embedder embedding.Embedder,
+	indexInfoList []*types.IndexInfo,
+) (map[string][]float32, error) {
+	modelID := embedder.GetModelID()
+	modelName := embedder.GetModelName()
+	dimension := embedder.GetDimensions()
+
+	uniqueHashes := make([]string, 0, len(indexInfoList))
+	contentByHash := make(map[string]string, len(indexInfoList))
+	sourceIDsByHash := make(map[string][]string, len(indexInfoList))
+	for _, indexInfo := range indexInfoList {
+		inputHash := calculateEmbeddingInputHash(indexInfo.Content)
+		if _, exists := contentByHash[inputHash]; !exists {
+			uniqueHashes = append(uniqueHashes, inputHash)
+			contentByHash[inputHash] = indexInfo.Content
+		}
+		sourceIDsByHash[inputHash] = append(sourceIDsByHash[inputHash], indexInfo.SourceID)
+	}
+
+	embeddingMap := make(map[string][]float32, len(indexInfoList))
+	missingHashes := make(map[string]struct{}, len(uniqueHashes))
+	for _, inputHash := range uniqueHashes {
+		missingHashes[inputHash] = struct{}{}
+	}
+
+	var cacheRepo interfaces.EmbeddingCacheRepository
+	if repo, ok := v.indexRepository.(interfaces.EmbeddingCacheRepository); ok {
+		cacheRepo = repo
+		cachedEmbeddings, err := cacheRepo.FindEmbeddingCache(ctx, modelID, modelName, dimension, uniqueHashes)
+		if err != nil {
+			logger.GetLogger(ctx).Warnf("Find embedding cache failed, falling back to fresh embedding: %v", err)
+		} else {
+			for inputHash, cachedEmbedding := range cachedEmbeddings {
+				if len(cachedEmbedding) == 0 {
+					continue
+				}
+				for _, sourceID := range sourceIDsByHash[inputHash] {
+					embeddingMap[sourceID] = cachedEmbedding
+				}
+				delete(missingHashes, inputHash)
+			}
+			if len(cachedEmbeddings) > 0 {
+				logger.GetLogger(ctx).Infof(
+					"Embedding cache hit: reused %d/%d unique chunk embeddings",
+					len(cachedEmbeddings), len(uniqueHashes),
+				)
+			}
+		}
+	}
+
+	if len(missingHashes) == 0 {
+		return embeddingMap, nil
+	}
+
+	hashesToEmbed := make([]string, 0, len(missingHashes))
+	contentList := make([]string, 0, len(missingHashes))
+	for _, inputHash := range uniqueHashes {
+		if _, missing := missingHashes[inputHash]; !missing {
+			continue
+		}
+		hashesToEmbed = append(hashesToEmbed, inputHash)
+		contentList = append(contentList, contentByHash[inputHash])
+	}
+
+	var embeddings [][]float32
+	var err error
+	for range 5 {
+		embeddings, err = embedder.BatchEmbedWithPool(ctx, embedder, contentList)
+		if err == nil {
+			break
+		}
+		logger.Errorf(ctx, "BatchEmbedWithPool failed: %v", err)
+		time.Sleep(100 * time.Millisecond)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(embeddings) != len(hashesToEmbed) {
+		return nil, fmt.Errorf("embedding result count mismatch: got %d, want %d", len(embeddings), len(hashesToEmbed))
+	}
+
+	newCacheEntries := make(map[string][]float32, len(hashesToEmbed))
+	for i, inputHash := range hashesToEmbed {
+		embedding := embeddings[i]
+		if len(embedding) == 0 {
+			return nil, fmt.Errorf("empty embedding returned for input hash %s", inputHash)
+		}
+		newCacheEntries[inputHash] = embedding
+		for _, sourceID := range sourceIDsByHash[inputHash] {
+			embeddingMap[sourceID] = embedding
+		}
+	}
+
+	if cacheRepo != nil {
+		if err := cacheRepo.SaveEmbeddingCache(ctx, modelID, modelName, dimension, newCacheEntries); err != nil {
+			logger.GetLogger(ctx).Warnf("Save embedding cache failed: %v", err)
+		}
+	}
+
+	return embeddingMap, nil
+}
+
+func calculateEmbeddingInputHash(content string) string {
+	sum := sha256.Sum256([]byte(content))
+	return hex.EncodeToString(sum[:])
 }
 
 // concurrentBatchSave saves all batches concurrently without concurrency limit

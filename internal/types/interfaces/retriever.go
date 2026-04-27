@@ -64,6 +64,25 @@ type RetrieveEngineRepository interface {
 	RetrieveEngine
 }
 
+// EmbeddingCacheRepository is an optional capability for retrieve repositories
+// that can persist embeddings independently from live index rows.
+type EmbeddingCacheRepository interface {
+	FindEmbeddingCache(
+		ctx context.Context,
+		modelID string,
+		modelName string,
+		dimension int,
+		inputHashes []string,
+	) (map[string][]float32, error)
+	SaveEmbeddingCache(
+		ctx context.Context,
+		modelID string,
+		modelName string,
+		dimension int,
+		embeddings map[string][]float32,
+	) error
+}
+
 // RetrieveEngineRegistry defines the retrieve engine registry interface
 type RetrieveEngineRegistry interface {
 	// Register registers the retrieve engine service

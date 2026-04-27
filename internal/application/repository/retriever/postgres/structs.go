@@ -28,6 +28,24 @@ type pgVector struct {
 	IsEnabled       bool                `json:"is_enabled"        gorm:"column:is_enabled;default:true;index"`
 }
 
+// pgEmbeddingCache stores reusable embeddings outside the live index table.
+type pgEmbeddingCache struct {
+	ID            uint                `json:"id"              gorm:"primarykey"`
+	CreatedAt     time.Time           `json:"created_at"      gorm:"column:created_at"`
+	UpdatedAt     time.Time           `json:"updated_at"      gorm:"column:updated_at"`
+	ModelID       string              `json:"model_id"        gorm:"column:model_id;not null"`
+	ModelName     string              `json:"model_name"      gorm:"column:model_name;not null"`
+	Dimension     int                 `json:"dimension"       gorm:"column:dimension;not null"`
+	InputHash     string              `json:"input_hash"      gorm:"column:input_hash;not null"`
+	Embedding     pgvector.HalfVector `json:"embedding"       gorm:"column:embedding;not null"`
+	LastUsedAt    *time.Time          `json:"last_used_at"   gorm:"column:last_used_at"`
+	ReuseHitCount int64               `json:"reuse_hit_count" gorm:"column:reuse_hit_count;default:0"`
+}
+
+func (pgEmbeddingCache) TableName() string {
+	return "embedding_cache"
+}
+
 // pgVectorWithScore extends pgVector with similarity score field
 type pgVectorWithScore struct {
 	ID              uint                `json:"id"                gorm:"primarykey"`
