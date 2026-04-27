@@ -1,4 +1,4 @@
-name: Build and Push Docker Image
+name: Build and Push Docker Images to GHCR
 on:
   push:
     tags:
@@ -6,34 +6,43 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+  packages: write
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}
 
 jobs:
   build-ui:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to Docker Hub
+      - name: Login to GHCR
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ secrets.DOCKERHUB_USERNAME }}/weknora-ui
+          images: ${{ env.IMAGE_PREFIX }}/weknora-ui
 
       - name: Build ui Image
-        uses: docker/build-push-action@v3
+        uses: docker/build-push-action@v6
         with:
           push: true
           platforms: linux/amd64,linux/arm64
@@ -64,25 +73,26 @@ jobs:
           swap-storage: true
 
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to Docker Hub
+      - name: Login to GHCR
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ secrets.DOCKERHUB_USERNAME }}/weknora-docreader
+          images: ${{ env.IMAGE_PREFIX }}/weknora-docreader
 
       - name: Build docreader Image
-        uses: docker/build-push-action@v3
+        uses: docker/build-push-action@v6
         with:
           push: true
           platforms: linux/amd64,linux/arm64
@@ -97,25 +107,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to Docker Hub
+      - name: Login to GHCR
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ secrets.DOCKERHUB_USERNAME }}/weknora-sandbox
+          images: ${{ env.IMAGE_PREFIX }}/weknora-sandbox
 
       - name: Build sandbox Image
-        uses: docker/build-push-action@v3
+        uses: docker/build-push-action@v6
         with:
           push: true
           platforms: linux/amd64,linux/arm64
@@ -140,22 +151,23 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to Docker Hub
+      - name: Login to GHCR
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ secrets.DOCKERHUB_USERNAME }}/weknora-app
+          images: ${{ env.IMAGE_PREFIX }}/weknora-app
 
       - name: Prepare version info
         id: version
@@ -174,7 +186,7 @@ jobs:
       
       - name: Build app Image
         id: build
-        uses: docker/build-push-action@v3
+        uses: docker/build-push-action@v6
         with:
           push: true
           platforms: ${{ matrix.platform }}
@@ -186,7 +198,7 @@ jobs:
             ${{ format('BUILD_TIME_ARG={0}', steps.version.outputs.build_time) }}
             ${{ format('GO_VERSION_ARG={0}', steps.version.outputs.go_version) }}
           labels: ${{ steps.meta.outputs.labels }}
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/weknora-app
+          tags: ${{ env.IMAGE_PREFIX }}/weknora-app
           cache-from: type=gha,scope=build-app-${{ env.PLATFORM_PAIR }}
           cache-to: type=gha,scope=build-app-${{ env.PLATFORM_PAIR }},mode=max
           outputs: type=image,push-by-digest=true,name-canonical=true,push=true
@@ -217,11 +229,12 @@ jobs:
           pattern: digests-*
           merge-multiple: true
 
-      - name: Login to Docker Hub
+      - name: Login to GHCR
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -230,14 +243,14 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ secrets.DOCKERHUB_USERNAME }}/weknora-app
+          images: ${{ env.IMAGE_PREFIX }}/weknora-app
 
       - name: Create manifest list and push
         working-directory: ${{ runner.temp }}/digests
         run: |
           docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-            $(printf '${{ secrets.DOCKERHUB_USERNAME }}/weknora-app@sha256:%s ' *)
+            $(printf '${{ env.IMAGE_PREFIX }}/weknora-app@sha256:%s ' *)
 
       - name: Inspect image
         run: |
-          docker buildx imagetools inspect ${{ secrets.DOCKERHUB_USERNAME }}/weknora-app:${{ steps.meta.outputs.version }}
+          docker buildx imagetools inspect ${{ env.IMAGE_PREFIX }}/weknora-app:${{ steps.meta.outputs.version }}
