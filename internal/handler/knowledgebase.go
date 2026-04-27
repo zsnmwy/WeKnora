@@ -5,6 +5,7 @@ import (
 	stderrors "errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/agent/tools"
@@ -749,6 +750,16 @@ func validateExtractConfig(config *types.ExtractConfig) error {
 		*config = types.ExtractConfig{Enabled: false}
 		return nil
 	}
+
+	config.Text = strings.TrimSpace(config.Text)
+	for i, tag := range config.Tags {
+		config.Tags[i] = strings.TrimSpace(tag)
+	}
+	hasCustomSchema := config.Text != "" || len(config.Tags) > 0 || len(config.Nodes) > 0 || len(config.Relations) > 0
+	if !hasCustomSchema {
+		return nil
+	}
+
 	// Validate text field
 	if config.Text == "" {
 		return apperrors.NewBadRequestError("text cannot be empty")
@@ -770,6 +781,10 @@ func validateExtractConfig(config *types.ExtractConfig) error {
 	}
 	nodeNames := make(map[string]bool)
 	for i, node := range config.Nodes {
+		if node == nil {
+			return apperrors.NewBadRequestError("node cannot be null at index " + strconv.Itoa(i))
+		}
+		node.Name = strings.TrimSpace(node.Name)
 		if node.Name == "" {
 			return apperrors.NewBadRequestError("node name cannot be empty at index " + strconv.Itoa(i))
 		}
@@ -785,6 +800,12 @@ func validateExtractConfig(config *types.ExtractConfig) error {
 	}
 	// Validate relations
 	for i, relation := range config.Relations {
+		if relation == nil {
+			return apperrors.NewBadRequestError("relation cannot be null at index " + strconv.Itoa(i))
+		}
+		relation.Node1 = strings.TrimSpace(relation.Node1)
+		relation.Node2 = strings.TrimSpace(relation.Node2)
+		relation.Type = strings.TrimSpace(relation.Type)
 		if relation.Node1 == "" {
 			return apperrors.NewBadRequestError("relation node1 cannot be empty at index " + strconv.Itoa(i))
 		}

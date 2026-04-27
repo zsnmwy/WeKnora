@@ -205,17 +205,7 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) error {
 		return err
 	}
 
-	template := &types.PromptTemplateStructured{
-		Description: s.template.Description,
-		Tags:        kb.ExtractConfig.Tags,
-		Examples: []types.GraphData{
-			{
-				Text:     kb.ExtractConfig.Text,
-				Node:     kb.ExtractConfig.Nodes,
-				Relation: kb.ExtractConfig.Relations,
-			},
-		},
-	}
+	template := buildChunkExtractTemplate(s.template, kb.ExtractConfig)
 	extractor := chatpipeline.NewExtractor(chatModel, template)
 	graph, err := extractor.Extract(ctx, chunk.Content)
 	if err != nil {
@@ -239,6 +229,38 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) error {
 		return err
 	}
 	return nil
+}
+
+func buildChunkExtractTemplate(base *types.PromptTemplateStructured,
+	extractConfig *types.ExtractConfig,
+) *types.PromptTemplateStructured {
+	if base == nil {
+		base = &types.PromptTemplateStructured{}
+	}
+	if extractConfig == nil || !extractConfig.Enabled || !hasCustomExtractSchema(extractConfig) {
+		return base
+	}
+	return &types.PromptTemplateStructured{
+		Description: base.Description,
+		Tags:        extractConfig.Tags,
+		Examples: []types.GraphData{
+			{
+				Text:     extractConfig.Text,
+				Node:     extractConfig.Nodes,
+				Relation: extractConfig.Relations,
+			},
+		},
+	}
+}
+
+func hasCustomExtractSchema(extractConfig *types.ExtractConfig) bool {
+	if extractConfig == nil {
+		return false
+	}
+	return strings.TrimSpace(extractConfig.Text) != "" ||
+		len(extractConfig.Tags) > 0 ||
+		len(extractConfig.Nodes) > 0 ||
+		len(extractConfig.Relations) > 0
 }
 
 // DataTableExtractPayload represents the table extract task payload
