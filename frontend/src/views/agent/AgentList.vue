@@ -691,10 +691,15 @@ const fetchList = () => {
     }),
     orgStore.fetchSharedAgents(),
     orgStore.fetchOrganizations()
-  ]).finally(() => { loading.value = false }).then(() => {
+  ]).then(() => {
     // 各空间智能体数量已由 GET /organizations 的 resource_counts 带回，存于 orgStore.resourceCounts
     const counts = orgStore.resourceCounts?.agents?.by_organization
     if (counts) spaceAgentCountByOrg.value = { ...counts }
+  }).catch((e: any) => {
+    console.error('Failed to fetch agent list', e)
+    MessagePlugin.error(e?.message || t('error.networkError'))
+  }).finally(() => {
+    loading.value = false
   })
 }
 
@@ -736,6 +741,10 @@ watch(spaceSelection, (val) => {
     } else {
       spaceAgentsList.value = []
     }
+  }).catch((e: any) => {
+    console.error('Failed to fetch organization shared agents', e)
+    MessagePlugin.error(e?.message || t('error.networkError'))
+    spaceAgentsList.value = []
   }).finally(() => {
     spaceAgentsLoading.value = false
   })

@@ -69,3 +69,38 @@ func TestIsDeepSeekModel_DetectsDeepSeekBaseURLWhenProviderEmpty(t *testing.T) {
 		t.Fatal("expected DeepSeek model to be detected from base URL")
 	}
 }
+
+func TestSelectAgentRerankModelID_PrefersDefaultActiveRerank(t *testing.T) {
+	models := []*types.Model{
+		{ID: "first", Type: types.ModelTypeRerank, Status: types.ModelStatusActive},
+		{ID: "default", Type: types.ModelTypeRerank, Status: types.ModelStatusActive, IsDefault: true},
+	}
+
+	if got := selectAgentRerankModelID(models); got != "default" {
+		t.Fatalf("selectAgentRerankModelID() = %q, want default", got)
+	}
+}
+
+func TestSelectAgentRerankModelID_FallsBackToFirstActiveRerank(t *testing.T) {
+	models := []*types.Model{
+		{ID: "chat", Type: types.ModelTypeKnowledgeQA, Status: types.ModelStatusActive, IsDefault: true},
+		{ID: "failed", Type: types.ModelTypeRerank, Status: types.ModelStatusDownloadFailed, IsDefault: true},
+		{ID: "rerank", Type: types.ModelTypeRerank, Status: types.ModelStatusActive},
+	}
+
+	if got := selectAgentRerankModelID(models); got != "rerank" {
+		t.Fatalf("selectAgentRerankModelID() = %q, want rerank", got)
+	}
+}
+
+func TestSelectAgentRerankModelID_ReturnsEmptyWithoutActiveRerank(t *testing.T) {
+	models := []*types.Model{
+		nil,
+		{ID: "chat", Type: types.ModelTypeKnowledgeQA, Status: types.ModelStatusActive},
+		{ID: "downloading", Type: types.ModelTypeRerank, Status: types.ModelStatusDownloading},
+	}
+
+	if got := selectAgentRerankModelID(models); got != "" {
+		t.Fatalf("selectAgentRerankModelID() = %q, want empty", got)
+	}
+}

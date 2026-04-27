@@ -111,8 +111,18 @@ func (s *sessionService) AgentQA(
 	if hasKnowledgeSearchTool {
 		rerankModelID := req.CustomAgent.Config.RerankModelID
 		if rerankModelID == "" {
-			logger.Warnf(ctx, "No rerank model configured for custom agent %s, but knowledge_search tool is enabled", req.CustomAgent.ID)
-			return errors.New("rerank model (rerank_model_id) is not configured in custom agent settings")
+			models, err := s.modelService.ListModels(ctx)
+			if err != nil {
+				logger.Warnf(ctx, "Failed to list models while resolving fallback rerank model for custom agent %s: %v", req.CustomAgent.ID, err)
+				return fmt.Errorf("failed to resolve fallback rerank model: %w", err)
+			}
+
+			rerankModelID = selectAgentRerankModelID(models)
+			if rerankModelID == "" {
+				logger.Warnf(ctx, "No rerank model configured for custom agent %s and no active tenant rerank model is available", req.CustomAgent.ID)
+				return errors.New("rerank model (rerank_model_id) is not configured in custom agent settings and no active Rerank model is available for this tenant")
+			}
+			logger.Infof(ctx, "Using tenant fallback rerank model %s for custom agent %s", rerankModelID, req.CustomAgent.ID)
 		}
 
 		rerankModel, err = s.modelService.GetRerankModel(ctx, rerankModelID)
@@ -297,6 +307,22 @@ func (s *sessionService) buildAgentConfig(
 	logger.Infof(ctx, "Agent search targets built: %d targets", len(searchTargets))
 
 	return agentConfig, nil
+}
+
+func selectAgentRerankModelID(models []*types.Model) string {
+	var firstActiveRerankID string
+	for _, model := range models {
+		if model == nil || model.Type != types.ModelTypeRerank || model.Status != types.ModelStatusActive {
+			continue
+		}
+		if firstActiveRerankID == "" {
+			firstActiveRerankID = model.ID
+		}
+		if model.IsDefault {
+			return model.ID
+		}
+	}
+	return firstActiveRerankID
 }
 
 func applyModelSpecificAgentDefaults(ctx context.Context, config *types.AgentConfig, model *types.Model) {
