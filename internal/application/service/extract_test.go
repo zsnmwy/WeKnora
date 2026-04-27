@@ -1,6 +1,7 @@
 package service
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Tencent/WeKnora/internal/types"
@@ -59,5 +60,59 @@ func TestBuildChunkExtractTemplateUsesCustomSchemaWhenProvided(t *testing.T) {
 	}
 	if len(got.Examples) != 1 || got.Examples[0].Text != "custom example" {
 		t.Fatalf("Examples = %+v, want custom example", got.Examples)
+	}
+}
+
+func TestBuildSampleDataDescriptionSupportsStringRows(t *testing.T) {
+	service := &DataTableSummaryService{}
+	result := &types.ToolResult{
+		Data: map[string]interface{}{
+			"rows": []map[string]string{
+				{
+					"笔记类型": "企业号",
+					"维护阶段": "新发布",
+				},
+			},
+		},
+	}
+
+	got := service.buildSampleDataDescription(result, 10)
+
+	for _, want := range []string{"笔记类型", "企业号", "维护阶段", "新发布"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("sample description missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestBuildChunksIncludeDeterministicTableStructure(t *testing.T) {
+	service := &DataTableSummaryService{}
+	resources := &extractionResources{
+		knowledge: &types.Knowledge{
+			ID:              "knowledge-1",
+			TenantID:        10000,
+			KnowledgeBaseID: "kb-1",
+		},
+	}
+	schemaDesc := "Table name: k_knowledge_1\nColumns: 2\nRows: 1\n\nColumn info:\n- 笔记类型 (VARCHAR)\n- 维护阶段 (VARCHAR)"
+	sampleDesc := "Sample data (first 10 rows):\n{\"笔记类型\":\"企业号\",\"维护阶段\":\"新发布\"}\n"
+
+	chunks := service.buildChunks(resources, "# Table Summary\n\nTable name: k_knowledge_1", "# Table Column Information\n\nTable name: k_knowledge_1", schemaDesc, sampleDesc)
+
+	if len(chunks) != 2 {
+		t.Fatalf("buildChunks() returned %d chunks, want 2", len(chunks))
+	}
+	summary := chunks[0].Content
+	columns := chunks[1].Content
+	for _, want := range []string{"Actual Table Schema", "Columns: 2", "Rows: 1", "笔记类型", "维护阶段"} {
+		if !strings.Contains(summary, want) {
+			t.Fatalf("summary chunk missing %q:\n%s", want, summary)
+		}
+		if !strings.Contains(columns, want) {
+			t.Fatalf("column chunk missing %q:\n%s", want, columns)
+		}
+	}
+	if !strings.Contains(summary, "Sample Rows") || !strings.Contains(summary, "企业号") {
+		t.Fatalf("summary chunk missing sample rows:\n%s", summary)
 	}
 }

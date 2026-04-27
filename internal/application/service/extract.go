@@ -559,14 +559,22 @@ func (s *DataTableSummaryService) processTableData(ctx context.Context, resource
 	logger.Debugf(ctx, "column describe of knowledge %s: %s", resources.knowledge.ID, columnDescription)
 
 	// 构建chunks：一个表格摘要chunk + 多个列描述chunks
-	chunks := s.buildChunks(resources, tableDescription, columnDescription)
+	chunks := s.buildChunks(resources, tableDescription, columnDescription, schemaDesc, sampleDesc)
 	return chunks, nil
 }
 
 // buildChunks 构建chunk对象
 // tableDescription和columnDescriptions分别生成一个chunk
-func (s *DataTableSummaryService) buildChunks(resources *extractionResources, tableDescription string, columnDescription string) []*types.Chunk {
+func (s *DataTableSummaryService) buildChunks(
+	resources *extractionResources,
+	tableDescription string,
+	columnDescription string,
+	schemaDesc string,
+	sampleDesc string,
+) []*types.Chunk {
 	chunks := make([]*types.Chunk, 0, 2)
+	tableContent := buildTableSemanticContent(tableDescription, schemaDesc, sampleDesc)
+	columnContent := buildColumnSemanticContent(columnDescription, schemaDesc)
 
 	// 表格摘要chunk
 	summaryChunk := &types.Chunk{
@@ -574,8 +582,8 @@ func (s *DataTableSummaryService) buildChunks(resources *extractionResources, ta
 		TenantID:        resources.knowledge.TenantID,
 		KnowledgeID:     resources.knowledge.ID,
 		KnowledgeBaseID: resources.knowledge.KnowledgeBaseID,
-		Content:         tableDescription,
-		ContentHash:     calculateStr(tableDescription),
+		Content:         tableContent,
+		ContentHash:     calculateStr(tableContent),
 		ChunkIndex:      0,
 		IsEnabled:       true,
 		ChunkType:       types.ChunkTypeTableSummary,
@@ -589,8 +597,8 @@ func (s *DataTableSummaryService) buildChunks(resources *extractionResources, ta
 		TenantID:        resources.knowledge.TenantID,
 		KnowledgeID:     resources.knowledge.ID,
 		KnowledgeBaseID: resources.knowledge.KnowledgeBaseID,
-		Content:         columnDescription,
-		ContentHash:     calculateStr(columnDescription),
+		Content:         columnContent,
+		ContentHash:     calculateStr(columnContent),
 		ChunkIndex:      1,
 		IsEnabled:       true,
 		ChunkType:       types.ChunkTypeTableColumn,
@@ -603,6 +611,35 @@ func (s *DataTableSummaryService) buildChunks(resources *extractionResources, ta
 	columnChunk.PreChunkID = summaryChunk.ID
 
 	return chunks
+}
+
+func buildTableSemanticContent(tableDescription, schemaDesc, sampleDesc string) string {
+	var builder strings.Builder
+	appendSection(&builder, "Generated Table Description", tableDescription)
+	appendSection(&builder, "Actual Table Schema", schemaDesc)
+	appendSection(&builder, "Sample Rows", sampleDesc)
+	return strings.TrimSpace(builder.String())
+}
+
+func buildColumnSemanticContent(columnDescription, schemaDesc string) string {
+	var builder strings.Builder
+	appendSection(&builder, "Generated Column Description", columnDescription)
+	appendSection(&builder, "Actual Table Schema", schemaDesc)
+	return strings.TrimSpace(builder.String())
+}
+
+func appendSection(builder *strings.Builder, title, content string) {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return
+	}
+	if builder.Len() > 0 {
+		builder.WriteString("\n\n")
+	}
+	builder.WriteString("# ")
+	builder.WriteString(title)
+	builder.WriteString("\n\n")
+	builder.WriteString(content)
 }
 
 // indexToVectorDB 将chunks索引到向量数据库
@@ -751,21 +788,35 @@ func (s *DataTableSummaryService) buildSampleDataDescription(sampleData *types.T
 	var builder strings.Builder
 	builder.WriteString(fmt.Sprintf("Sample data (first %d rows):\n", maxRows))
 
-	rows, ok := sampleData.Data["rows"].([]map[string]interface{})
-	if !ok {
+	if sampleData == nil || sampleData.Data == nil {
 		return builder.String()
 	}
 
-	for i, row := range rows {
-		if i >= maxRows {
-			break
+	switch rows := sampleData.Data["rows"].(type) {
+	case []map[string]string:
+		for i, row := range rows {
+			if i >= maxRows {
+				break
+			}
+			jsonBytes, err := json.Marshal(row)
+			if err != nil {
+				continue
+			}
+			builder.WriteString(string(jsonBytes))
+			builder.WriteString("\n")
 		}
-		jsonBytes, err := json.Marshal(row)
-		if err != nil {
-			continue
+	case []map[string]interface{}:
+		for i, row := range rows {
+			if i >= maxRows {
+				break
+			}
+			jsonBytes, err := json.Marshal(row)
+			if err != nil {
+				continue
+			}
+			builder.WriteString(string(jsonBytes))
+			builder.WriteString("\n")
 		}
-		builder.WriteString(string(jsonBytes))
-		builder.WriteString("\n")
 	}
 
 	return builder.String()
