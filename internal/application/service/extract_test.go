@@ -3,6 +3,7 @@ package service
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/Tencent/WeKnora/internal/types"
 )
@@ -114,5 +115,44 @@ func TestBuildChunksIncludeDeterministicTableStructure(t *testing.T) {
 	}
 	if !strings.Contains(summary, "Sample Rows") || !strings.Contains(summary, "企业号") {
 		t.Fatalf("summary chunk missing sample rows:\n%s", summary)
+	}
+}
+
+func TestBuildChunksLimitTableSemanticContentForEmbedding(t *testing.T) {
+	service := &DataTableSummaryService{}
+	resources := &extractionResources{
+		knowledge: &types.Knowledge{
+			ID:              "knowledge-1",
+			TenantID:        10000,
+			KnowledgeBaseID: "kb-1",
+		},
+	}
+	schemaDesc := "Table name: k_knowledge_1\nColumns: 2\nRows: 500\n\nColumn info:\n- 推广套餐名 (VARCHAR)\n- 推广套餐话术 (VARCHAR)"
+	longSample := "Sample data (first 10 rows):\n" + strings.Repeat("{\"推广套餐话术\":\"成都联通千兆宽带长期优惠，安装费减免，套餐详情包含大量说明文本。\"}\n", 300)
+	longColumnDescription := strings.Repeat("推广套餐话术字段用于描述宽带套餐卖点、价格、安装费和办理条件。", 240)
+
+	chunks := service.buildChunks(resources, "该表记录宽带推广产品信息。", longColumnDescription, schemaDesc, longSample)
+
+	summary := chunks[0].Content
+	columns := chunks[1].Content
+	if len(summary) > tableSemanticMaxEmbeddingBytes {
+		t.Fatalf("summary chunk length = %d, want <= %d", len(summary), tableSemanticMaxEmbeddingBytes)
+	}
+	if len(columns) > tableSemanticMaxEmbeddingBytes {
+		t.Fatalf("column chunk length = %d, want <= %d", len(columns), tableSemanticMaxEmbeddingBytes)
+	}
+	for _, got := range []string{summary, columns} {
+		if !utf8.ValidString(got) {
+			t.Fatalf("semantic chunk is not valid UTF-8:\n%s", got)
+		}
+		if !strings.Contains(got, "Actual Table Schema") {
+			t.Fatalf("semantic chunk missing table schema:\n%s", got)
+		}
+	}
+	if !strings.Contains(summary, "Content truncated") {
+		t.Fatalf("summary chunk should mark truncated sample content:\n%s", summary)
+	}
+	if !strings.Contains(columns, "Content truncated") {
+		t.Fatalf("column chunk should mark truncated column content:\n%s", columns)
 	}
 }

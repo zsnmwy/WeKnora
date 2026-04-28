@@ -24,6 +24,9 @@ import (
 )
 
 const (
+	tableSemanticMaxEmbeddingBytes = 7000
+	semanticTruncationNotice       = "\n\n[Content truncated to fit embedding input limit.]"
+
 	// tableDescriptionPromptTemplate is the prompt template for generating table descriptions
 	tableDescriptionPromptTemplate = `You are a data analysis expert. Based on the following table structure information and data samples, generate a concise table metadata description (200-300 words).
 
@@ -343,6 +346,7 @@ func (s *DataTableSummaryService) Handle(ctx context.Context, t *asynq.Task) err
 	// 4. 索引到向量数据库
 	if err := s.indexToVectorDB(ctx, chunks, resources.retrieveEngine, resources.embeddingModel); err != nil {
 		s.cleanupOnFailure(ctx, resources, chunks, err)
+		s.enqueuePostProcessFallbackOnFinalAttempt(ctx, payload, resources.knowledge, err)
 		return err
 	}
 	s.enqueueKnowledgePostProcess(ctx, resources.knowledge)
@@ -614,32 +618,109 @@ func (s *DataTableSummaryService) buildChunks(
 }
 
 func buildTableSemanticContent(tableDescription, schemaDesc, sampleDesc string) string {
-	var builder strings.Builder
-	appendSection(&builder, "Generated Table Description", tableDescription)
-	appendSection(&builder, "Actual Table Schema", schemaDesc)
-	appendSection(&builder, "Sample Rows", sampleDesc)
-	return strings.TrimSpace(builder.String())
+	return buildSemanticContentWithLimit(tableSemanticMaxEmbeddingBytes,
+		semanticSection{
+			title:      "Generated Table Description",
+			content:    tableDescription,
+			maxContent: 2400,
+		},
+		semanticSection{
+			title:      "Actual Table Schema",
+			content:    schemaDesc,
+			maxContent: 2600,
+		},
+		semanticSection{
+			title:   "Sample Rows",
+			content: sampleDesc,
+		},
+	)
 }
 
 func buildColumnSemanticContent(columnDescription, schemaDesc string) string {
+	return buildSemanticContentWithLimit(tableSemanticMaxEmbeddingBytes,
+		semanticSection{
+			title:      "Generated Column Description",
+			content:    columnDescription,
+			maxContent: 5000,
+		},
+		semanticSection{
+			title:   "Actual Table Schema",
+			content: schemaDesc,
+		},
+	)
+}
+
+type semanticSection struct {
+	title      string
+	content    string
+	maxContent int
+}
+
+func buildSemanticContentWithLimit(maxBytes int, sections ...semanticSection) string {
+	if maxBytes <= 0 {
+		return ""
+	}
+
 	var builder strings.Builder
-	appendSection(&builder, "Generated Column Description", columnDescription)
-	appendSection(&builder, "Actual Table Schema", schemaDesc)
+	for _, section := range sections {
+		content := strings.TrimSpace(section.content)
+		if content == "" {
+			continue
+		}
+		if section.maxContent > 0 {
+			content = truncateStringWithNoticeByBytes(content, section.maxContent)
+		}
+
+		prefix := ""
+		if builder.Len() > 0 {
+			prefix = "\n\n"
+		}
+		header := prefix + "# " + section.title + "\n\n"
+		if builder.Len()+len(header) >= maxBytes {
+			break
+		}
+
+		builder.WriteString(header)
+		remaining := maxBytes - builder.Len()
+		builder.WriteString(truncateStringWithNoticeByBytes(content, remaining))
+		if len(content) > remaining {
+			break
+		}
+	}
+
 	return strings.TrimSpace(builder.String())
 }
 
-func appendSection(builder *strings.Builder, title, content string) {
-	content = strings.TrimSpace(content)
-	if content == "" {
-		return
+func truncateStringWithNoticeByBytes(s string, maxBytes int) string {
+	s = strings.TrimSpace(s)
+	if maxBytes <= 0 || s == "" {
+		return ""
 	}
-	if builder.Len() > 0 {
-		builder.WriteString("\n\n")
+	if len(s) <= maxBytes {
+		return s
 	}
-	builder.WriteString("# ")
-	builder.WriteString(title)
-	builder.WriteString("\n\n")
-	builder.WriteString(content)
+	if maxBytes <= len(semanticTruncationNotice) {
+		return truncateStringByBytes(s, maxBytes)
+	}
+	contentLimit := maxBytes - len(semanticTruncationNotice)
+	return strings.TrimSpace(truncateStringByBytes(s, contentLimit)) + semanticTruncationNotice
+}
+
+func truncateStringByBytes(s string, maxBytes int) string {
+	if maxBytes <= 0 || s == "" {
+		return ""
+	}
+	if len(s) <= maxBytes {
+		return s
+	}
+	var builder strings.Builder
+	for _, r := range s {
+		if builder.Len()+len(string(r)) > maxBytes {
+			break
+		}
+		builder.WriteRune(r)
+	}
+	return builder.String()
 }
 
 // indexToVectorDB 将chunks索引到向量数据库
@@ -702,15 +783,6 @@ func (s *DataTableSummaryService) indexToVectorDB(
 // 思路：删除已创建的chunk和对应的向量索引，避免脏数据残留
 func (s *DataTableSummaryService) cleanupOnFailure(ctx context.Context, resources *extractionResources, chunks []*types.Chunk, indexErr error) {
 	logger.Warnf(ctx, "Starting cleanup due to failure: %v", indexErr)
-
-	// 1. 更新知识状态为失败
-	resources.knowledge.ParseStatus = types.ParseStatusFailed
-	resources.knowledge.ErrorMessage = indexErr.Error()
-	if err := s.knowledgeService.UpdateKnowledge(ctx, resources.knowledge); err != nil {
-		logger.Errorf(ctx, "Failed to update knowledge status: %v", err)
-	} else {
-		logger.Infof(ctx, "Updated knowledge %s status to failed", resources.knowledge.ID)
-	}
 
 	// 提取chunk IDs
 	chunkIDs := make([]string, 0, len(chunks))
