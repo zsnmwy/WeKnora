@@ -2272,26 +2272,8 @@ func (s *knowledgeService) getSummary(ctx context.Context,
 		maxInputChars = s.config.Conversation.Summary.MaxInputChars
 	}
 
-	// Sort chunks by StartAt for proper concatenation
-	sortedChunks := make([]*types.Chunk, len(chunks))
-	copy(sortedChunks, chunks)
-	sort.Slice(sortedChunks, func(i, j int) bool {
-		return sortedChunks[i].StartAt < sortedChunks[j].StartAt
-	})
-
-	// Concatenate original chunk contents by StartAt offset to reconstruct the
-	// document, then enrich with image info in a second pass. Enrichment must
-	// happen AFTER concatenation because StartAt is based on original document
-	// offsets — enriched (longer) content would break the positioning.
-	chunkContents := ""
-	for _, chunk := range sortedChunks {
-		runes := []rune(chunkContents)
-		if chunk.StartAt <= len(runes) {
-			chunkContents = string(runes[:chunk.StartAt]) + chunk.Content
-		} else {
-			chunkContents = chunkContents + chunk.Content
-		}
-	}
+	sortedChunks := sortSummaryChunks(chunks)
+	chunkContents := buildSummaryContentFromChunks(sortedChunks)
 
 	// Collect image_info from image_ocr/image_caption children and enrich
 	chunkIDs := make([]string, len(sortedChunks))
@@ -2357,6 +2339,70 @@ func (s *knowledgeService) getSummary(ctx context.Context,
 	}
 	logger.GetLogger(ctx).WithField("summary", summary.Content).Infof("GetSummary success")
 	return summary.Content, nil
+}
+
+func sortSummaryChunks(chunks []*types.Chunk) []*types.Chunk {
+	sortedChunks := make([]*types.Chunk, len(chunks))
+	copy(sortedChunks, chunks)
+	sort.SliceStable(sortedChunks, func(i, j int) bool {
+		if sortedChunks[i].StartAt == sortedChunks[j].StartAt {
+			return sortedChunks[i].ChunkIndex < sortedChunks[j].ChunkIndex
+		}
+		return sortedChunks[i].StartAt < sortedChunks[j].StartAt
+	})
+	return sortedChunks
+}
+
+func buildSummaryContentFromChunks(sortedChunks []*types.Chunk) string {
+	if len(sortedChunks) == 0 {
+		return ""
+	}
+	if shouldConcatenateSummaryChunks(sortedChunks) {
+		contents := make([]string, 0, len(sortedChunks))
+		for _, chunk := range sortedChunks {
+			if chunk == nil {
+				continue
+			}
+			content := strings.TrimSpace(chunk.Content)
+			if content != "" {
+				contents = append(contents, content)
+			}
+		}
+		return strings.Join(contents, "\n\n")
+	}
+
+	// Concatenate original chunk contents by StartAt offset to reconstruct the
+	// document. This removes overlap introduced by normal text splitting.
+	chunkContents := ""
+	for _, chunk := range sortedChunks {
+		if chunk == nil {
+			continue
+		}
+		runes := []rune(chunkContents)
+		if chunk.StartAt <= len(runes) {
+			chunkContents = string(runes[:chunk.StartAt]) + chunk.Content
+		} else {
+			chunkContents = chunkContents + chunk.Content
+		}
+	}
+	return chunkContents
+}
+
+func shouldConcatenateSummaryChunks(chunks []*types.Chunk) bool {
+	allNonPositional := true
+	for _, chunk := range chunks {
+		if chunk == nil {
+			continue
+		}
+		switch chunk.ChunkType {
+		case types.ChunkTypeTableSummary, types.ChunkTypeTableColumn:
+			return true
+		}
+		if chunk.StartAt != 0 || chunk.EndAt != 0 {
+			allNonPositional = false
+		}
+	}
+	return allNonPositional
 }
 
 // sampleLongContent returns content that fits within maxChars.
@@ -2459,7 +2505,7 @@ func (s *knowledgeService) ProcessSummaryGeneration(ctx context.Context, t *asyn
 
 	var chunks []*types.Chunk
 	if isTableDocument {
-		chunks, err = s.chunkService.ListChunksByKnowledgeIDAndTypes(ctx, payload.KnowledgeID, tableSemanticChunkTypes)
+		chunks, err = s.chunkService.ListChunksByKnowledgeIDAndTypes(ctx, payload.KnowledgeID, postProcessChunkTypes)
 	} else {
 		chunks, err = s.chunkService.ListChunksByKnowledgeID(ctx, payload.KnowledgeID)
 	}
@@ -2469,10 +2515,8 @@ func (s *knowledgeService) ProcessSummaryGeneration(ctx context.Context, t *asyn
 		return nil
 	}
 
-	summaryChunks := filterChunksByTypes(chunks, graphDefaultChunkTypes...)
-	if isTableDocument {
-		summaryChunks = filterChunksByTypes(chunks, tableSemanticChunkTypes...)
-	}
+	selection := selectSemanticSourceChunks(knowledge, chunks)
+	summaryChunks := selectSummarySourceChunks(selection, chunks)
 
 	if len(summaryChunks) == 0 {
 		logger.Infof(ctx, "No summary source chunks found for knowledge: %s", payload.KnowledgeID)

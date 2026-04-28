@@ -69,7 +69,7 @@ func TestSelectSemanticSourceChunks_DocumentKeepsTextAndImageSources(t *testing.
 	}
 }
 
-func TestSelectSummarySourceChunks_TableUsesSemanticChunks(t *testing.T) {
+func TestSelectSummarySourceChunks_TablePrefersTextChunks(t *testing.T) {
 	knowledge := &types.Knowledge{FileName: "orders.xlsx"}
 	chunks := []*types.Chunk{
 		{ID: "row-1", ChunkType: types.ChunkTypeText, Content: "row text", ChunkIndex: 1},
@@ -81,11 +81,28 @@ func TestSelectSummarySourceChunks_TableUsesSemanticChunks(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("selected %d summary chunks, want 1", len(got))
 	}
-	if got[0].ID != "table-summary" {
-		t.Fatalf("selected %q, want table semantic chunk", got[0].ID)
+	if got[0].ID != "row-1" {
+		t.Fatalf("selected %q, want text chunk", got[0].ID)
 	}
 	if shouldGenerateQuestionsFromPostProcess(selection) {
 		t.Fatal("table documents must not generate row-level recall questions")
+	}
+}
+
+func TestSelectSummarySourceChunks_TableFallsBackToSemanticChunks(t *testing.T) {
+	knowledge := &types.Knowledge{FileName: "orders.xlsx"}
+	chunks := []*types.Chunk{
+		{ID: "table-summary", ChunkType: types.ChunkTypeTableSummary, Content: "table summary", ChunkIndex: 2},
+		{ID: "table-column", ChunkType: types.ChunkTypeTableColumn, Content: "columns", ChunkIndex: 3},
+	}
+
+	selection := selectSemanticSourceChunks(knowledge, chunks)
+	got := selectSummarySourceChunks(selection, chunks)
+	if len(got) != 2 {
+		t.Fatalf("selected %d summary chunks, want 2", len(got))
+	}
+	if got[0].ID != "table-summary" || got[1].ID != "table-column" {
+		t.Fatalf("selected chunks = [%q, %q], want semantic chunks", got[0].ID, got[1].ID)
 	}
 }
 
@@ -104,5 +121,30 @@ func TestSelectSummarySourceChunks_DocumentKeepsTextLikeChunks(t *testing.T) {
 	}
 	if !shouldGenerateQuestionsFromPostProcess(selection) {
 		t.Fatal("non-table documents should keep question generation eligibility")
+	}
+}
+
+func TestBuildSummaryContentFromChunks_ConcatenatesTableSemanticChunks(t *testing.T) {
+	chunks := sortSummaryChunks([]*types.Chunk{
+		{ID: "columns", ChunkType: types.ChunkTypeTableColumn, Content: "column descriptions", ChunkIndex: 1},
+		{ID: "summary", ChunkType: types.ChunkTypeTableSummary, Content: "table summary with sample rows", ChunkIndex: 0},
+	})
+
+	got := buildSummaryContentFromChunks(chunks)
+	want := "table summary with sample rows\n\ncolumn descriptions"
+	if got != want {
+		t.Fatalf("summary content = %q, want %q", got, want)
+	}
+}
+
+func TestBuildSummaryContentFromChunks_ReconstructsOverlappingTextChunks(t *testing.T) {
+	chunks := sortSummaryChunks([]*types.Chunk{
+		{ID: "1", ChunkType: types.ChunkTypeText, Content: "hello world", ChunkIndex: 0, StartAt: 0, EndAt: 11},
+		{ID: "2", ChunkType: types.ChunkTypeText, Content: "world again", ChunkIndex: 1, StartAt: 6, EndAt: 17},
+	})
+
+	got := buildSummaryContentFromChunks(chunks)
+	if got != "hello world again" {
+		t.Fatalf("summary content = %q, want reconstructed overlap", got)
 	}
 }

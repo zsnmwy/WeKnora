@@ -62,6 +62,10 @@ func selectSemanticSourceChunks(knowledge *types.Knowledge, chunks []*types.Chun
 
 func selectSummarySourceChunks(selection sourceChunkSelection, chunks []*types.Chunk) []*types.Chunk {
 	if selection.IsTableDocument {
+		textChunks := filterChunksByTypes(chunks, graphDefaultChunkTypes...)
+		if len(textChunks) > 0 {
+			return textChunks
+		}
 		return selection.Chunks
 	}
 	return filterChunksByTypes(chunks, graphDefaultChunkTypes...)
