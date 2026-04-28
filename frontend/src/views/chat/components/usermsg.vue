@@ -230,19 +230,29 @@ const closePreImg = () => {
 
 .user_msg {
     width: max-content;
-    max-width: 776px;
+    max-width: calc(100% - 88px);
     display: flex;
-    padding: 10px 12px;
+    padding: 10px 16px;
     flex-direction: column;
     justify-content: center;
     align-items: center;
     gap: 4px;
     flex: 1 0 0;
-    border-radius: 4px;
-    background: #8CE97F;
+    border-radius: 22px;
+    background: #edf3fe;
     margin-left: auto;
-    color: #000000e6;
-    font-size: 15px;
+    color: #0f1115;
+    font-family: quote-cjk-patch, Inter, system-ui, -apple-system, "system-ui", "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif;
+    font-size: 16px;
+    font-size-adjust: none;
+    font-weight: 400;
+    font-stretch: 100%;
+    font-kerning: auto;
+    font-optical-sizing: auto;
+    line-height: 24px;
+    letter-spacing: normal;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: auto;
     text-align: justify;
     word-break: break-all;
     box-sizing: border-box;

@@ -8,6 +8,7 @@ import vueJsx from '@vitejs/plugin-vue-jsx'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const require = createRequire(import.meta.url)
+const devApiTarget = process.env.VITE_DEV_API_TARGET || 'http://localhost:8080'
 
 function resolveVueOfficePptxEntry(): string {
   try {
@@ -41,12 +42,12 @@ export default defineConfig({
     // 代理配置，用于开发环境
     proxy: {
       '/api': {
-        target: 'http://localhost:8080',
+        target: devApiTarget,
         changeOrigin: true,
         secure: false,
       },
       '/files': {
-        target: 'http://localhost:8080',
+        target: devApiTarget,
         changeOrigin: true,
         secure: false,
       }

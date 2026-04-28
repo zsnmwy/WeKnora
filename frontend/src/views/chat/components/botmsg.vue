@@ -76,7 +76,8 @@ import {
     buildManualMarkdown,
     copyTextToClipboard,
     formatManualTitle,
-    replaceIncompleteImageWithPlaceholder
+    replaceIncompleteImageWithPlaceholder,
+    renderScrollableMarkdownTable
 } from '@/utils/chatMessageShared';
 import {
     createMermaidCodeRenderer,
@@ -158,6 +159,7 @@ customRenderer.image = function({href, title, text}){
 
 // 覆盖代码块渲染方法，支持 Mermaid
 customRenderer.code = createMermaidCodeRenderer('mermaid-botmsg');
+customRenderer.table = renderScrollableMarkdownTable;
 
 // 计算属性：将 Markdown 文本转换为 tokens
 const mentionedItems = computed(() => {
@@ -316,7 +318,7 @@ onBeforeUnmount(() => {
 .content-wrapper {
     background: var(--td-bg-color-container);
     border-radius: 6px;
-    padding: 8px 0px;
+    padding: 0;
     transition: all 0.2s ease;
 }
 
@@ -398,15 +400,33 @@ onBeforeUnmount(() => {
 }
 
 .ai-markdown-template {
-    font-size: 15px;
-    color: var(--td-text-color-primary);
-    line-height: 1.6;
+    width: 100%;
+    max-width: 752px;
+    color: #0f1115;
+    font-family: quote-cjk-patch, Inter, system-ui, -apple-system, "system-ui", "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif;
+    font-size: 17px;
+    font-size-adjust: none;
+    font-weight: 400;
+    font-stretch: 100%;
+    font-kerning: auto;
+    font-optical-sizing: auto;
+    line-height: 30px;
+    letter-spacing: 0.01em;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: auto;
 }
 
 .markdown-content {
     :deep(p) {
-        margin: 6px 0;
-        line-height: 1.6;
+        margin: 0 0 16px;
+        color: #0f1115;
+        font-size: 17px;
+        line-height: 30px;
+        letter-spacing: 0.01em;
+    }
+
+    :deep(p:last-child) {
+        margin-bottom: 0;
     }
 
     :deep(code) {
@@ -414,7 +434,9 @@ onBeforeUnmount(() => {
         padding: 2px 5px;
         border-radius: 3px;
         font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
-        font-size: 11px;
+        font-size: 1em;
+        line-height: inherit;
+        letter-spacing: inherit;
     }
 
     :deep(pre) {
@@ -427,29 +449,57 @@ onBeforeUnmount(() => {
         code {
             background: none;
             padding: 0;
+            font-size: 14px;
+            line-height: 22px;
+            letter-spacing: normal;
         }
     }
 
     :deep(ul), :deep(ol) {
-        margin: 6px 0;
-        padding-left: 20px;
+        margin: 16px 0;
+        padding-left: 18px;
+        color: #0f1115;
+        font-size: 17px;
+        line-height: 30px;
+        letter-spacing: 0.01em;
     }
 
     :deep(li) {
-        margin: 3px 0;
+        margin: 0;
+        line-height: 30px;
+        letter-spacing: 0.01em;
     }
 
     :deep(blockquote) {
         border-left: 2px solid var(--td-brand-color);
         padding-left: 10px;
-        margin: 6px 0;
+        margin: 16px 0;
         color: var(--td-text-color-secondary);
     }
 
     :deep(h1), :deep(h2), :deep(h3), :deep(h4), :deep(h5), :deep(h6) {
-        margin: 10px 0 6px 0;
+        margin: 32px 0 16px;
+        color: #0f1115;
+        font-weight: 700;
+        letter-spacing: 0.01em;
+        line-height: 1.5;
+    }
+
+    :deep(h1) {
+        font-size: 24px;
+    }
+
+    :deep(h2) {
+        font-size: 22px;
+    }
+
+    :deep(h3), :deep(h4), :deep(h5), :deep(h6) {
+        font-size: 20px;
+    }
+
+    :deep(strong) {
+        color: #0f1115;
         font-weight: 600;
-        color: var(--td-text-color-primary);
     }
 
     :deep(a) {
@@ -461,25 +511,51 @@ onBeforeUnmount(() => {
         }
     }
 
+    :deep(.ai-table-scroll) {
+        width: calc(100vw - 320px);
+        max-width: 100%;
+        overflow-x: auto;
+        margin: 0 0 16px;
+        padding-bottom: 2px;
+    }
+
+    :deep(.ai-table-scroll::-webkit-scrollbar) {
+        height: 6px;
+    }
+
+    :deep(.ai-table-scroll::-webkit-scrollbar-thumb) {
+        background: rgba(118, 131, 158, 0.22);
+        border-radius: 999px;
+    }
+
     :deep(table) {
+        width: max-content;
+        min-width: 100%;
         border-collapse: collapse;
-        margin: 6px 0;
-        font-size: 11px;
-        width: 100%;
+        border-spacing: 2px;
+        color: #0f1115;
+        font-size: 16px;
+        line-height: 27px;
 
         th, td {
-            border: 1px solid var(--td-component-stroke);
-            padding: 5px 8px;
+            min-width: 100px;
+            border: 0;
+            padding: 10px 16px 10px 0;
             text-align: left;
+            vertical-align: top;
+            background: transparent;
         }
 
         th {
-            background: var(--td-bg-color-secondarycontainer);
-            font-weight: 600;
+            font-weight: 500;
+        }
+
+        td {
+            font-weight: 400;
         }
 
         tbody tr:nth-child(even) {
-            background: var(--td-bg-color-secondarycontainer);
+            background: transparent;
         }
     }
 
@@ -537,11 +613,21 @@ onBeforeUnmount(() => {
 .bot_msg {
     // background: var(--td-bg-color-container);
     border-radius: 4px;
-    color: var(--td-text-color-primary);
-    font-size: 16px;
+    color: #0f1115;
+    font-family: quote-cjk-patch, Inter, system-ui, -apple-system, "system-ui", "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif;
+    font-size: 17px;
+    font-size-adjust: none;
+    font-stretch: 100%;
+    font-kerning: auto;
+    font-optical-sizing: auto;
+    line-height: 30px;
+    letter-spacing: 0.01em;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: auto;
     // padding: 10px 12px;
     margin-right: auto;
-    max-width: 100%;
+    width: 100%;
+    max-width: 752px;
     box-sizing: border-box;
 }
 

@@ -39,6 +39,29 @@ export const buildManualMarkdown = (_question: string, answer: string): string =
   return `${safeAnswer}`;
 };
 
+export function renderScrollableMarkdownTable(this: any, token: any): string {
+  let header = '';
+  for (const cell of token.header || []) {
+    header += this.tablecell(cell);
+  }
+
+  let body = '';
+  for (const row of token.rows || []) {
+    let rowContent = '';
+    for (const cell of row) {
+      rowContent += this.tablecell(cell);
+    }
+    body += this.tablerow({ text: rowContent });
+  }
+
+  const tbody = body ? `<tbody>${body}</tbody>` : '';
+  return `<div class="ai-table-scroll"><table>
+<thead>
+${this.tablerow({ text: header })}</thead>
+${tbody}</table></div>
+`;
+}
+
 export const copyTextToClipboard = async (content: string): Promise<void> => {
   if (navigator.clipboard && navigator.clipboard.writeText) {
     await navigator.clipboard.writeText(content);
