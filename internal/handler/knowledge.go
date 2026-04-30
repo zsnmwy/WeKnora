@@ -809,6 +809,7 @@ func mimeTypeByExt(filename string) string {
 		".txt":      "text/plain; charset=utf-8",
 		".md":       "text/markdown; charset=utf-8",
 		".markdown": "text/markdown; charset=utf-8",
+		".mm":       "application/xml; charset=utf-8",
 		".json":     "application/json; charset=utf-8",
 		".xml":      "application/xml; charset=utf-8",
 		".html":     "text/html; charset=utf-8",

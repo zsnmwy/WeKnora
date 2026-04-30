@@ -55,7 +55,7 @@ const fileTypeMap: Record<string, typeof previewType.value> = {};
 ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'tiff', 'svg'].forEach(t => fileTypeMap[t] = 'image');
 ['xlsx', 'xls', 'csv'].forEach(t => fileTypeMap[t] = 'excel');
 ['md', 'markdown'].forEach(t => fileTypeMap[t] = 'markdown');
-['txt', 'json', 'xml', 'html', 'css', 'js', 'ts', 'py', 'java', 'go',
+['txt', 'json', 'xml', 'mm', 'html', 'css', 'js', 'ts', 'py', 'java', 'go',
  'cpp', 'c', 'h', 'sh', 'yaml', 'yml', 'ini', 'conf', 'log', 'sql', 'rs', 'rb', 'php',
  'swift', 'kt', 'scala', 'r', 'lua', 'pl', 'toml'].forEach(t => fileTypeMap[t] = 'text');
 ['mp3', 'wav', 'm4a', 'flac', 'ogg'].forEach(t => fileTypeMap[t] = 'audio');
@@ -73,7 +73,7 @@ const mimeTypeMap: Record<string, string> = {
   png: 'image/png', gif: 'image/gif', bmp: 'image/bmp',
   webp: 'image/webp', tiff: 'image/tiff', svg: 'image/svg+xml',
   txt: 'text/plain', md: 'text/markdown', markdown: 'text/markdown',
-  json: 'application/json', xml: 'application/xml',
+  json: 'application/json', xml: 'application/xml', mm: 'application/xml',
   html: 'text/html', css: 'text/css',
   js: 'text/javascript', ts: 'text/typescript',
   py: 'text/x-python', java: 'text/x-java', go: 'text/x-go',

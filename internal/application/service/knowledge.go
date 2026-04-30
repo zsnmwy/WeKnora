@@ -631,6 +631,7 @@ func (s *knowledgeService) CreateKnowledgeFromURL(ctx context.Context,
 var allowedFileURLExtensions = map[string]bool{
 	"txt":  true,
 	"md":   true,
+	"mm":   true,
 	"pdf":  true,
 	"docx": true,
 	"doc":  true,
@@ -725,7 +726,7 @@ func (s *knowledgeService) createKnowledgeFromFileURL(
 	if fileType != "" {
 		if !allowedFileURLExtensions[strings.ToLower(fileType)] {
 			logger.Errorf(ctx, "Unsupported file type for file URL import: %s", fileType)
-			return nil, werrors.NewBadRequestError(fmt.Sprintf("不支持的文件类型: %s，仅支持 txt, md, pdf, docx, doc", fileType))
+			return nil, werrors.NewBadRequestError(fmt.Sprintf("不支持的文件类型: %s，仅支持 txt, md, mm, pdf, docx, doc", fileType))
 		}
 	}
 
@@ -3404,7 +3405,7 @@ func (s *knowledgeService) ReparseKnowledge(ctx context.Context, knowledgeID str
 // isValidFileType checks if a file type is supported
 func isValidFileType(filename string) bool {
 	switch strings.ToLower(getFileType(filename)) {
-	case "pdf", "txt", "docx", "doc", "md", "markdown", "png", "jpg", "jpeg", "gif", "csv", "xlsx", "xls", "pptx", "ppt", "json",
+	case "pdf", "txt", "docx", "doc", "md", "markdown", "mm", "png", "jpg", "jpeg", "gif", "csv", "xlsx", "xls", "pptx", "ppt", "json",
 		"mp3", "wav", "m4a", "flac", "ogg":
 		return true
 	default:

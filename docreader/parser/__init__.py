@@ -16,6 +16,7 @@ meaningful chunks for further processing and indexing.
 from .doc_parser import DocParser
 from .docx2_parser import Docx2Parser
 from .excel_parser import ExcelParser
+from .freemind_parser import FreeMindParser
 from .image_parser import ImageParser
 from .markdown_parser import MarkdownParser
 from .parser import Parser
@@ -33,6 +34,7 @@ __all__ = [
     "WebParser",
     "Parser",
     "ExcelParser",
+    "FreeMindParser",
     "ParserEngineRegistry",
     "registry",
 ]

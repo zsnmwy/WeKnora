@@ -93,3 +93,13 @@ func TestSanitizeManualDownloadFilename(t *testing.T) {
 		})
 	}
 }
+
+func TestKnowledgeFileTypeAllowsFreeMind(t *testing.T) {
+	if !isValidFileType("AI生成视频-Seedance 2.0使用指南.mm") {
+		t.Fatal("expected .mm FreeMind files to be accepted for knowledge upload")
+	}
+
+	if !allowedFileURLExtensions["mm"] {
+		t.Fatal("expected .mm FreeMind files to be accepted for file URL import")
+	}
+}
