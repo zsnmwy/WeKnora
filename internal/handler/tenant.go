@@ -756,10 +756,19 @@ func (h *TenantHandler) GetTenantWebSearchConfig(c *gin.Context) {
 		return
 	}
 
+	data := tenant.WebSearchConfig
+	if data == nil {
+		data = &types.WebSearchConfig{
+			MaxResults:        5,
+			IncludeDate:       true,
+			CompressionMethod: "none",
+			Blacklist:         []string{},
+		}
+	}
 	logger.Infof(ctx, "Tenant web search config retrieved successfully, Tenant ID: %d", tenant.ID)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data":    tenant.WebSearchConfig,
+		"data":    data,
 	})
 }
 
@@ -945,10 +954,13 @@ func (h *TenantHandler) GetTenantConversationConfig(c *gin.Context) {
 		return
 	}
 
-	// If tenant has no conversation config, return defaults from config.yaml
 	var response *types.ConversationConfig
-	logger.Info(ctx, "Tenant has no conversation config, returning defaults")
-	response = h.buildDefaultConversationConfig()
+	if tenant.ConversationConfig != nil {
+		response = tenant.ConversationConfig
+	} else {
+		logger.Info(ctx, "Tenant has no conversation config, returning defaults")
+		response = h.buildDefaultConversationConfig()
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data":    response,
@@ -1152,7 +1164,13 @@ func (h *TenantHandler) GetTenantRetrievalConfig(c *gin.Context) {
 	}
 	data := tenant.RetrievalConfig
 	if data == nil {
-		data = &types.RetrievalConfig{}
+		data = &types.RetrievalConfig{
+			EmbeddingTopK:    h.config.Conversation.EmbeddingTopK,
+			VectorThreshold:  h.config.Conversation.VectorThreshold,
+			KeywordThreshold: h.config.Conversation.KeywordThreshold,
+			RerankTopK:       h.config.Conversation.RerankTopK,
+			RerankThreshold:  h.config.Conversation.RerankThreshold,
+		}
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,

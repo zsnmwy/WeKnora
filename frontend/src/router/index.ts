@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import type { RouteLocationNormalized } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { autoSetup } from '@/api/auth'
+import { persistLoginSession } from '@/utils/auth-session'
 
 /** Lite /桌面 WebView 硬刷新时可能只打开 `/`，用 session 记住上次页面以便恢复 */
 const LITE_LAST_PATH_KEY = 'weknora_lite_last_path'
@@ -134,34 +135,6 @@ const router = createRouter({
   ],
 });
 
-// 持久化 auto-setup / login 返回的认证信息到 store
-function persistLoginResponse(authStore: ReturnType<typeof useAuthStore>, response: any) {
-  if (response.user && response.tenant && response.token) {
-    authStore.setUser({
-      id: response.user.id || '',
-      username: response.user.username || '',
-      email: response.user.email || '',
-      avatar: response.user.avatar,
-      tenant_id: String(response.tenant.id) || '',
-      can_access_all_tenants: response.user.can_access_all_tenants || false,
-      created_at: response.user.created_at || new Date().toISOString(),
-      updated_at: response.user.updated_at || new Date().toISOString()
-    })
-    authStore.setToken(response.token)
-    if (response.refresh_token) {
-      authStore.setRefreshToken(response.refresh_token)
-    }
-    authStore.setTenant({
-      id: String(response.tenant.id) || '',
-      name: response.tenant.name || '',
-      api_key: response.tenant.api_key || '',
-      owner_id: response.user.id || '',
-      created_at: response.tenant.created_at || new Date().toISOString(),
-      updated_at: response.tenant.updated_at || new Date().toISOString()
-    })
-  }
-}
-
 let autoSetupAttempted = false
 let liteDeepLinkRestoreDone = false
 
@@ -202,7 +175,7 @@ router.beforeEach(async (to, from, next) => {
         try {
           const response = await autoSetup()
           if (response.success) {
-            persistLoginResponse(authStore, response)
+            await persistLoginSession(authStore, response)
             authStore.setLiteMode(true)
             next(to.fullPath)
             return

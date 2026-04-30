@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted } from 'vue'
+import { computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { MessagePlugin } from 'tdesign-vue-next'
 import ManualKnowledgeEditor from '@/components/manual-knowledge-editor.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useSettingsStore } from '@/stores/settings'
-import { getCurrentUser } from '@/api/auth'
+import { persistLoginSession, redirectAfterLogin } from '@/utils/auth-session'
 
 // TDesign locale configs
 import enUSConfig from 'tdesign-vue-next/esm/locale/en_US'
@@ -40,52 +40,9 @@ const clearOIDCCallbackState = (path = '/') => {
   window.history.replaceState({}, document.title, path)
 }
 
-const syncOIDCUserContext = async () => {
-  const currentUserResponse = await getCurrentUser()
-  if (!currentUserResponse.success || !currentUserResponse.data?.user || !currentUserResponse.data?.tenant) {
-    throw new Error(currentUserResponse.message || 'Failed to get user information')
-  }
-
-  const { user, tenant } = currentUserResponse.data
-  authStore.setUser({
-    id: user.id || '',
-    username: user.username || '',
-    email: user.email || '',
-    avatar: user.avatar,
-    tenant_id: String(user.tenant_id || tenant.id || ''),
-    can_access_all_tenants: user.can_access_all_tenants || false,
-    created_at: user.created_at || new Date().toISOString(),
-    updated_at: user.updated_at || new Date().toISOString()
-  })
-  authStore.setTenant({
-    id: String(tenant.id) || '',
-    name: tenant.name || '',
-    api_key: tenant.api_key || '',
-    owner_id: tenant.owner_id || user.id || '',
-    description: tenant.description,
-    status: tenant.status,
-    business: tenant.business,
-    storage_quota: tenant.storage_quota,
-    storage_used: tenant.storage_used,
-    created_at: tenant.created_at || new Date().toISOString(),
-    updated_at: tenant.updated_at || new Date().toISOString()
-  })
-}
-
 const persistOIDCLoginResponse = async (response: any) => {
-  if (!response.token) {
-    throw new Error(response.message || 'OIDC login failed')
-  }
-
-  authStore.setToken(response.token)
-  if (response.refresh_token) {
-    authStore.setRefreshToken(response.refresh_token)
-  }
-
-  await syncOIDCUserContext()
-
-  await nextTick()
-  router.replace('/platform/knowledge-bases')
+  await persistLoginSession(authStore, response)
+  await redirectAfterLogin(router)
 }
 
 const handleGlobalOIDCCallback = async () => {

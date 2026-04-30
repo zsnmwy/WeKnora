@@ -369,7 +369,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, nextTick, onMounted, onBeforeUnmount, computed } from 'vue'
+import { ref, reactive, onMounted, onBeforeUnmount, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { Swiper, SwiperSlide } from 'swiper/vue'
@@ -380,6 +380,7 @@ import 'swiper/css/pagination'
 import { login, register, getOIDCAuthorizationURL, getOIDCConfig, autoSetup } from '@/api/auth'
 import { useAuthStore } from '@/stores/auth'
 import { useI18n } from 'vue-i18n'
+import { persistLoginSession, redirectAfterLogin } from '@/utils/auth-session'
 
 // Import screenshot images
 import screenshot1 from '@/assets/img/screenshot-1.svg'
@@ -543,33 +544,8 @@ onBeforeUnmount(() => {
 })
 
 const persistLoginResponse = async (response: any) => {
-  if (response.user && response.tenant && response.token) {
-    authStore.setUser({
-      id: response.user.id || '',
-      username: response.user.username || '',
-      email: response.user.email || '',
-      avatar: response.user.avatar,
-      tenant_id: String(response.tenant.id) || '',
-      can_access_all_tenants: response.user.can_access_all_tenants || false,
-      created_at: response.user.created_at || new Date().toISOString(),
-      updated_at: response.user.updated_at || new Date().toISOString()
-    })
-    authStore.setToken(response.token)
-    if (response.refresh_token) {
-      authStore.setRefreshToken(response.refresh_token)
-    }
-    authStore.setTenant({
-      id: String(response.tenant.id) || '',
-      name: response.tenant.name || '',
-      api_key: response.tenant.api_key || '',
-      owner_id: response.user.id || '',
-      created_at: response.tenant.created_at || new Date().toISOString(),
-      updated_at: response.tenant.updated_at || new Date().toISOString()
-    })
-  }
-
-  await nextTick()
-  router.replace('/platform/knowledge-bases')
+  await persistLoginSession(authStore, response)
+  await redirectAfterLogin(router)
 }
 
 const getBackendOIDCRedirectURI = () => `${window.location.origin}/api/v1/auth/oidc/callback`
@@ -671,7 +647,7 @@ const handleRegister = async () => {
 // Check if already logged in; for lite edition, attempt transparent auto-setup
 onMounted(async () => {
   if (authStore.isLoggedIn) {
-    router.replace('/platform/knowledge-bases')
+    await redirectAfterLogin(router)
     return
   }
 
