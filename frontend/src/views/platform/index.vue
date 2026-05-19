@@ -90,9 +90,17 @@ const checkKnowledgeBaseInitialization = async (): Promise<boolean> => {
 }
 
 
+// Check if the current route is a chat-related page where global drop
+// should be skipped (chat pages handle their own attachment drops).
+const isChatPage = (): boolean => {
+    const name = route.name as string;
+    return name === 'globalCreatChat' || name === 'kbCreatChat' || name === 'chat';
+}
+
 // 全局拖拽事件处理
 const handleGlobalDragEnter = (event: DragEvent) => {
     event.preventDefault();
+    if (isChatPage()) return;
     dragCounter++;
     if (event.dataTransfer) {
         event.dataTransfer.effectAllowed = 'all';
@@ -102,6 +110,7 @@ const handleGlobalDragEnter = (event: DragEvent) => {
 
 const handleGlobalDragOver = (event: DragEvent) => {
     event.preventDefault();
+    if (isChatPage()) return;
     if (event.dataTransfer) {
         event.dataTransfer.dropEffect = 'copy';
     }
@@ -109,6 +118,7 @@ const handleGlobalDragOver = (event: DragEvent) => {
 
 const handleGlobalDragLeave = (event: DragEvent) => {
     event.preventDefault();
+    if (isChatPage()) return;
     dragCounter--;
     if (dragCounter === 0) {
         ismask.value = false;
@@ -119,6 +129,10 @@ const handleGlobalDrop = async (event: DragEvent) => {
     event.preventDefault();
     dragCounter = 0;
     ismask.value = false;
+
+    // On chat pages, skip the global knowledge-base upload so the
+    // Input-field component can handle file drops as chat attachments.
+    if (isChatPage()) return;
     
     const DataTransferFiles = event.dataTransfer?.files ? Array.from(event.dataTransfer.files) : [];
     const DataTransferItemList = event.dataTransfer?.items ? Array.from(event.dataTransfer.items) : [];

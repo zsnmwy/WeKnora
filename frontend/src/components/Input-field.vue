@@ -1813,9 +1813,15 @@ const onDrop = (e: DragEvent) => {
   e.preventDefault();
   const files = e.dataTransfer?.files;
   if (!files) return;
-  const imageFiles = Array.from(files).filter(f => f.type.startsWith('image/'));
+  const allFiles = Array.from(files);
+  const imageFiles = allFiles.filter(f => f.type.startsWith('image/'));
+  const nonImageFiles = allFiles.filter(f => !f.type.startsWith('image/'));
   if (imageFiles.length > 0 && isImageUploadEnabledByAgent.value) {
     addImageFiles(imageFiles);
+  }
+  // Treat non-image drops as attachment uploads (PDFs, docs, audio, etc.)
+  if (nonImageFiles.length > 0 && attachmentUploadRef.value) {
+    attachmentUploadRef.value.addFiles(nonImageFiles);
   }
 };
 
