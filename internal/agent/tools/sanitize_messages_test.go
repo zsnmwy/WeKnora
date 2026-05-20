@@ -79,6 +79,36 @@ func TestSanitizeMessages(t *testing.T) {
 		assert.Contains(t, result[1].Content, "search")
 	})
 
+	t.Run("stale tool result separated from matching assistant is converted", func(t *testing.T) {
+		messages := []chat.Message{
+			{Role: "system", Content: "system"},
+			{Role: "assistant", Content: "thinking", ToolCalls: []chat.ToolCall{
+				{ID: "call_1"},
+			}},
+			{Role: "user", Content: "next turn"},
+			{Role: "tool", Content: "late result", ToolCallID: "call_1", Name: "search"},
+		}
+		result := SanitizeMessages(messages)
+		require.Len(t, result, 4)
+		assert.Equal(t, "system", result[3].Role)
+		assert.Empty(t, result[3].ToolCallID)
+		assert.Contains(t, result[3].Content, "late result")
+	})
+
+	t.Run("tool result without call id is converted", func(t *testing.T) {
+		messages := []chat.Message{
+			{Role: "system", Content: "system"},
+			{Role: "assistant", Content: "thinking", ToolCalls: []chat.ToolCall{
+				{ID: "call_1"},
+			}},
+			{Role: "tool", Content: "missing id", Name: "search"},
+		}
+		result := SanitizeMessages(messages)
+		require.Len(t, result, 3)
+		assert.Equal(t, "system", result[2].Role)
+		assert.Contains(t, result[2].Content, "missing id")
+	})
+
 	t.Run("empty slice", func(t *testing.T) {
 		result := SanitizeMessages(nil)
 		assert.Empty(t, result)
