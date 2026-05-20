@@ -158,6 +158,14 @@ func (s *DataSourceService) UpdateDataSource(ctx context.Context, ds *types.Data
 		return nil, datasource.ErrDataSourceInvalid
 	}
 
+	// Preserve existing status when the caller omits it (empty string).
+	// Frontend update forms may not include the status field; without this
+	// guard the status would be cleared to "", causing AddOrUpdate to
+	// remove the cron entry and break scheduled syncs.
+	if ds.Status == "" {
+		ds.Status = existing.Status
+	}
+
 	// Validate new configuration if changed
 	if ds.Type != existing.Type || string(ds.Config) != string(existing.Config) {
 		if err := s.validateDataSourceConfig(ctx, ds); err != nil {
