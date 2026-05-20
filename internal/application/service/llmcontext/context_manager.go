@@ -5,12 +5,10 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/models/chat"
-	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
 
@@ -72,7 +70,7 @@ func (cm *contextManager) GetContext(ctx context.Context, sessionID string) ([]c
 		return nil, fmt.Errorf("failed to load context: %w", err)
 	}
 
-	if len(messages) > 0 {
+	if len(messages) > 0 && hasNonSystemMessage(messages) {
 		logger.Debugf(ctx, "[ContextManager][Session-%s] Cache hit: %d messages", sessionID, len(messages))
 		return messages, nil
 	}
@@ -89,6 +87,9 @@ func (cm *contextManager) GetContext(ctx context.Context, sessionID string) ([]c
 	}
 
 	if len(rebuilt) > 0 {
+		if len(messages) > 0 && messages[0].Role == "system" {
+			rebuilt = append([]chat.Message{messages[0]}, rebuilt...)
+		}
 		if saveErr := cm.storage.Save(ctx, sessionID, rebuilt); saveErr != nil {
 			logger.Warnf(ctx, "[ContextManager][Session-%s] Failed to warm cache: %v", sessionID, saveErr)
 		}
@@ -124,15 +125,8 @@ func (cm *contextManager) rebuildFromDB(ctx context.Context, sessionID string) (
 		}
 		switch msg.Role {
 		case "user":
-			if msg.RenderedContent != "" {
-				p.query = msg.RenderedContent
-			} else {
-				p.query = msg.Content
-			}
+			p.query = msg.LLMContextContent()
 			p.createdAt = msg.CreatedAt
-			if desc := extractImageCaptions(msg.Images); desc != "" && msg.RenderedContent == "" {
-				p.query += "\n\n[用户上传图片内容]\n" + desc
-			}
 		case "assistant":
 			p.answer = regThinkTags.ReplaceAllString(msg.Content, "")
 		}
@@ -160,16 +154,13 @@ func (cm *contextManager) rebuildFromDB(ctx context.Context, sessionID string) (
 	return result, nil
 }
 
-// extractImageCaptions concatenates non-empty Caption fields from message
-// images so that previous turns' image descriptions are included in context.
-func extractImageCaptions(images types.MessageImages) string {
-	var parts []string
-	for _, img := range images {
-		if img.Caption != "" {
-			parts = append(parts, img.Caption)
+func hasNonSystemMessage(messages []chat.Message) bool {
+	for _, msg := range messages {
+		if msg.Role != "system" {
+			return true
 		}
 	}
-	return strings.Join(parts, "\n")
+	return false
 }
 
 // ClearContext removes all context for a session.

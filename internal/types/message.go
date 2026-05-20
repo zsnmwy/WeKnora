@@ -39,6 +39,21 @@ type MessageImage struct {
 // MessageImages is a slice of MessageImage for database storage
 type MessageImages []MessageImage
 
+// CaptionText returns all stored image captions joined as plain text.
+func (m MessageImages) CaptionText() string {
+	if len(m) == 0 {
+		return ""
+	}
+
+	parts := make([]string, 0, len(m))
+	for _, img := range m {
+		if img.Caption != "" {
+			parts = append(parts, img.Caption)
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
 // Value implements the driver.Valuer interface for database serialization
 func (m MessageImages) Value() (driver.Value, error) {
 	if m == nil {
@@ -211,7 +226,7 @@ type Message struct {
 	// Empty for non-retrieval intents or assistant messages.
 	RenderedContent string `json:"-" gorm:"type:text;column:rendered_content;default:''"`
 	// Channel indicates the source channel of this message (e.g., "web", "api", "im")
-	Channel string `json:"channel,omitempty" gorm:"type:varchar(50);default:''"` 
+	Channel string `json:"channel,omitempty" gorm:"type:varchar(50);default:''"`
 	// KnowledgeID links this message to a Knowledge entry in the chat history knowledge base
 	// Used for vector search indexing: when set, the message content has been indexed as a Knowledge passage
 	KnowledgeID string `json:"knowledge_id,omitempty" gorm:"type:varchar(36);index"`
@@ -221,6 +236,28 @@ type Message struct {
 	UpdatedAt time.Time `json:"updated_at"`
 	// Soft delete timestamp
 	DeletedAt gorm.DeletedAt `json:"deleted_at"            gorm:"index"`
+}
+
+// LLMContextContent returns the message text that should be visible in
+// subsequent model context. RenderedContent already contains RAG/attachment
+// expansion, so it wins when present; otherwise stored attachment and image
+// analysis are appended to the raw user content.
+func (m *Message) LLMContextContent() string {
+	if m == nil {
+		return ""
+	}
+	if m.RenderedContent != "" {
+		return m.RenderedContent
+	}
+
+	content := m.Content
+	if desc := m.Images.CaptionText(); desc != "" {
+		content += "\n\n[用户上传图片内容]\n" + desc
+	}
+	if len(m.Attachments) > 0 {
+		content += m.Attachments.BuildPrompt()
+	}
+	return content
 }
 
 // AgentSteps represents a collection of agent execution steps

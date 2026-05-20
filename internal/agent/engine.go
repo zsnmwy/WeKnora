@@ -263,6 +263,9 @@ func (e *AgentEngine) Execute(
 		imgs = imageURLs[0]
 	}
 	messages := e.buildMessagesWithLLMContext(systemPrompt, query, sessionID, llmContext, imgs)
+	if len(messages) > 0 {
+		e.addMessageToContext(ctx, sessionID, messages[len(messages)-1], "current user")
+	}
 
 	// Get tool definitions for function calling
 	tools := e.buildToolsForLLM()
@@ -291,6 +294,9 @@ func (e *AgentEngine) Execute(
 		finishAgentSpan(agentSpan, state, err)
 		return nil, err
 	}
+	if state.FinalAnswer != "" {
+		e.addMessageToContext(ctx, sessionID, chat.Message{Role: "assistant", Content: state.FinalAnswer}, "final answer")
+	}
 
 	logger.Infof(ctx, "[Agent] Completed: %d rounds, %d steps, complete=%v",
 		state.CurrentRound, len(state.RoundSteps), state.IsComplete)
@@ -302,6 +308,17 @@ func (e *AgentEngine) Execute(
 	})
 	finishAgentSpan(agentSpan, state, nil)
 	return state, nil
+}
+
+func (e *AgentEngine) addMessageToContext(ctx context.Context, sessionID string, msg chat.Message, label string) {
+	if e.contextManager == nil {
+		return
+	}
+	if err := e.contextManager.AddMessage(ctx, sessionID, msg); err != nil {
+		logger.Warnf(ctx, "[Agent] Failed to add %s message to context: %v", label, err)
+		return
+	}
+	logger.Debugf(ctx, "[Agent] Added %s message to context (session: %s)", label, sessionID)
 }
 
 // finishAgentSpan records the final outcome of an agent execution onto the

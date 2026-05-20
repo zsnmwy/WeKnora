@@ -5,7 +5,6 @@ import (
 	"regexp"
 	"slices"
 	"sort"
-	"strings"
 	"sync"
 
 	"github.com/Tencent/WeKnora/internal/common"
@@ -114,15 +113,8 @@ func loadAndProcessHistory(
 			h = &types.History{}
 		}
 		if message.Role == "user" {
-			if message.RenderedContent != "" {
-				h.Query = message.RenderedContent
-			} else {
-				h.Query = message.Content
-			}
+			h.Query = message.LLMContextContent()
 			h.CreateAt = message.CreatedAt
-			if desc := extractImageCaptions(message.Images); desc != "" && message.RenderedContent == "" {
-				h.Query += "\n\n[用户上传图片内容]\n" + desc
-			}
 		} else {
 			h.Answer = regThinkTags.ReplaceAllString(message.Content, "")
 			h.KnowledgeReferences = message.KnowledgeReferences
@@ -147,19 +139,6 @@ func loadAndProcessHistory(
 
 	slices.Reverse(historyList)
 	return historyList, nil
-}
-
-// extractImageCaptions concatenates non-empty Caption fields from stored
-// message images. Used when loading history so that previous turns' image
-// descriptions are visible to the model.
-func extractImageCaptions(images types.MessageImages) string {
-	var parts []string
-	for _, img := range images {
-		if img.Caption != "" {
-			parts = append(parts, img.Caption)
-		}
-	}
-	return strings.Join(parts, "\n")
 }
 
 // ---------------------------------------------------------------------------
