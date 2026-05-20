@@ -174,6 +174,12 @@ func (p *AttachmentProcessor) processWithDocParser(
 	if err != nil {
 		return fmt.Errorf("SimpleFormatReader failed: %w", err)
 	}
+	if result == nil {
+		return fmt.Errorf("SimpleFormatReader returned nil result")
+	}
+	if result.Error != "" {
+		return fmt.Errorf("SimpleFormatReader returned error: %s", result.Error)
+	}
 
 	// Resolve embedded image refs to storage URLs.
 	if len(result.ImageRefs) > 0 && p.imageResolver != nil {
@@ -240,6 +246,12 @@ func (p *AttachmentProcessor) processWithDocumentReader(
 	})
 	if err != nil {
 		return fmt.Errorf("DocumentReader failed: %w", err)
+	}
+	if result == nil {
+		return fmt.Errorf("DocumentReader returned nil result")
+	}
+	if result.Error != "" {
+		return fmt.Errorf("DocumentReader returned error: %s", result.Error)
 	}
 
 	// Resolve embedded image refs to storage URLs.

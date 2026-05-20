@@ -76,7 +76,7 @@ func (p *WeKnoraCloudSignedDocumentReader) Read(ctx context.Context, req *types.
 		req.FileName, req.FileType, req.ParserEngine, strings.TrimSpace(req.URL) != "", len(req.FileContent), req.RequestID)
 	body := httpReadRequest{
 		FileName:  req.FileName,
-		FileType:  req.FileType,
+		FileType:  NormalizeFileType(req.FileType),
 		URL:       req.URL,
 		Title:     req.Title,
 		RequestID: req.RequestID,

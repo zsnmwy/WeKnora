@@ -190,7 +190,7 @@ func (p *HTTPDocumentReader) Read(ctx context.Context, req *types.ReadRequest) (
 
 	body := httpReadRequest{
 		FileName:  req.FileName,
-		FileType:  req.FileType,
+		FileType:  NormalizeFileType(req.FileType),
 		URL:       req.URL,
 		Title:     req.Title,
 		RequestID: req.RequestID,

@@ -187,17 +187,14 @@ func (s *sessionService) AgentQA(
 		agentModelSupportsVision = agentModelInfo.Parameters.SupportsVision
 	}
 
-	agentQuery := req.Query
-	var agentImageURLs []string
-	if agentModelSupportsVision && len(req.ImageURLs) > 0 {
-		agentImageURLs = req.ImageURLs
+	agentQuery, agentImageURLs := buildAgentQuery(req, agentModelSupportsVision)
+	if len(agentImageURLs) > 0 {
 		logger.Infof(ctx, "Agent model supports vision, passing %d image(s) directly", len(agentImageURLs))
 	} else if req.ImageDescription != "" {
-		agentQuery = req.Query + "\n\n[用户上传图片内容]\n" + req.ImageDescription
-		logger.Infof(ctx, "Agent model does not support vision, appending image description (%d chars)", len(req.ImageDescription))
+		logger.Infof(ctx, "Agent query includes image description (%d chars)", len(req.ImageDescription))
 	}
-	if req.QuotedContext != "" {
-		agentQuery += "\n\n" + req.QuotedContext
+	if len(req.Attachments) > 0 {
+		logger.Infof(ctx, "Agent query includes %d attachment(s)", len(req.Attachments))
 	}
 
 	// Execute agent with streaming (asynchronously)
@@ -218,6 +215,26 @@ func (s *sessionService) AgentQA(
 	}
 	// Return empty - events will be handled by Handler via EventBus subscription
 	return nil
+}
+
+func buildAgentQuery(req *types.QARequest, agentModelSupportsVision bool) (string, []string) {
+	agentQuery := req.Query
+	var agentImageURLs []string
+
+	if agentModelSupportsVision && len(req.ImageURLs) > 0 {
+		agentImageURLs = req.ImageURLs
+	} else if req.ImageDescription != "" {
+		agentQuery = req.Query + "\n\n[用户上传图片内容]\n" + req.ImageDescription
+	}
+
+	if req.QuotedContext != "" {
+		agentQuery += "\n\n" + req.QuotedContext
+	}
+	if len(req.Attachments) > 0 {
+		agentQuery += req.Attachments.BuildPrompt()
+	}
+
+	return agentQuery, agentImageURLs
 }
 
 // buildAgentConfig creates a runtime AgentConfig from the QARequest's custom agent configuration,

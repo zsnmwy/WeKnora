@@ -110,7 +110,7 @@ func (p *GRPCDocumentReader) Read(ctx context.Context, req *types.ReadRequest) (
 	protoReq := &proto.ReadRequest{
 		FileContent: req.FileContent,
 		FileName:    req.FileName,
-		FileType:    req.FileType,
+		FileType:    NormalizeFileType(req.FileType),
 		Url:         req.URL,
 		Title:       req.Title,
 		RequestId:   req.RequestID,

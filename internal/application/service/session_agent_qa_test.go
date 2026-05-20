@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/Tencent/WeKnora/internal/types"
@@ -102,5 +103,61 @@ func TestSelectAgentRerankModelID_ReturnsEmptyWithoutActiveRerank(t *testing.T) 
 
 	if got := selectAgentRerankModelID(models); got != "" {
 		t.Fatalf("selectAgentRerankModelID() = %q, want empty", got)
+	}
+}
+
+func TestBuildAgentQueryIncludesAttachments(t *testing.T) {
+	req := &types.QARequest{
+		Query: "总结这个文档",
+		Attachments: types.MessageAttachments{
+			{
+				FileName: "交付中心api对接规范(1).pdf",
+				FileType: ".pdf",
+				FileSize: 206171,
+				Content:  "交付中心 api 对接规范\n创建订单规范",
+			},
+		},
+	}
+
+	query, imageURLs := buildAgentQuery(req, false)
+
+	if len(imageURLs) != 0 {
+		t.Fatalf("imageURLs = %v, want empty", imageURLs)
+	}
+	for _, want := range []string{
+		"总结这个文档",
+		"<attachments>",
+		`name="交付中心api对接规范(1).pdf"`,
+		"<type>.pdf</type>",
+		"交付中心 api 对接规范",
+		"创建订单规范",
+	} {
+		if !strings.Contains(query, want) {
+			t.Fatalf("agent query does not contain %q:\n%s", want, query)
+		}
+	}
+}
+
+func TestBuildAgentQueryPreservesVisionImagesAndAttachments(t *testing.T) {
+	req := &types.QARequest{
+		Query:     "看一下这个文件",
+		ImageURLs: []string{"local://10000/image.png"},
+		Attachments: types.MessageAttachments{
+			{
+				FileName: "notes.txt",
+				FileType: ".txt",
+				FileSize: 12,
+				Content:  "hello",
+			},
+		},
+	}
+
+	query, imageURLs := buildAgentQuery(req, true)
+
+	if len(imageURLs) != 1 || imageURLs[0] != "local://10000/image.png" {
+		t.Fatalf("imageURLs = %v, want direct image URL", imageURLs)
+	}
+	if !strings.Contains(query, "<attachments>") || !strings.Contains(query, "hello") {
+		t.Fatalf("agent query should include attachments:\n%s", query)
 	}
 }

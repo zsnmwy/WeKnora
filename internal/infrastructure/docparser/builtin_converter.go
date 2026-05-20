@@ -14,7 +14,10 @@ import (
 // simpleFormats lists file extensions that Go can handle without the Python service.
 var simpleFormats = map[string]bool{
 	"md": true, "markdown": true,
-	"txt": true, "text": true,
+	"txt": true, "text": true, "log": true,
+	"html": true, "htm": true,
+	"xml":  true,
+	"yaml": true, "yml": true,
 	"csv":  true,
 	"json": true,
 }
@@ -25,7 +28,43 @@ var imageFormats = map[string]bool{
 }
 
 var audioFormats = map[string]bool{
-	"mp3": true, "wav": true, "m4a": true, "flac": true, "ogg": true,
+	"mp3": true, "wav": true, "m4a": true, "flac": true, "ogg": true, "aac": true,
+}
+
+var mimeFileTypes = map[string]string{
+	"application/pdf":    "pdf",
+	"text/plain":         "txt",
+	"text/markdown":      "md",
+	"text/csv":           "csv",
+	"application/json":   "json",
+	"text/json":          "json",
+	"text/html":          "html",
+	"application/xml":    "xml",
+	"text/xml":           "xml",
+	"application/yaml":   "yaml",
+	"application/x-yaml": "yaml",
+	"text/yaml":          "yaml",
+	"text/x-yaml":        "yaml",
+
+	"application/msword": "doc",
+	"application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+	"application/vnd.ms-excel": "xls",
+	"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":         "xlsx",
+	"application/vnd.ms-powerpoint":                                             "ppt",
+	"application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+	"image/jpeg":  "jpeg",
+	"image/png":   "png",
+	"image/gif":   "gif",
+	"image/bmp":   "bmp",
+	"image/tiff":  "tiff",
+	"image/webp":  "webp",
+	"audio/mpeg":  "mp3",
+	"audio/wav":   "wav",
+	"audio/x-wav": "wav",
+	"audio/mp4":   "m4a",
+	"audio/flac":  "flac",
+	"audio/ogg":   "ogg",
+	"audio/aac":   "aac",
 }
 
 func init() {
@@ -37,9 +76,22 @@ func init() {
 	}
 }
 
+// NormalizeFileType converts an extension or MIME type into the canonical
+// extension key used by parser registries.
+func NormalizeFileType(fileType string) string {
+	ft := strings.ToLower(strings.TrimSpace(fileType))
+	if before, _, ok := strings.Cut(ft, ";"); ok {
+		ft = strings.TrimSpace(before)
+	}
+	if mapped, ok := mimeFileTypes[ft]; ok {
+		return mapped
+	}
+	return strings.TrimPrefix(ft, ".")
+}
+
 // IsSimpleFormat returns true if the file type can be handled by the Go SimpleFormatReader.
 func IsSimpleFormat(fileType string) bool {
-	return simpleFormats[strings.ToLower(strings.TrimPrefix(fileType, "."))]
+	return simpleFormats[NormalizeFileType(fileType)]
 }
 
 // SimpleFormatReader handles simple file formats and images directly in Go,
@@ -48,15 +100,17 @@ type SimpleFormatReader struct{}
 
 // Read reads simple format files and returns markdown.
 func (b *SimpleFormatReader) Read(_ context.Context, req *types.ReadRequest) (*types.ReadResult, error) {
-	ft := strings.ToLower(strings.TrimPrefix(req.FileType, "."))
+	ft := NormalizeFileType(req.FileType)
 	if ft == "" {
-		ft = strings.TrimPrefix(strings.ToLower(filepath.Ext(req.FileName)), ".")
+		ft = NormalizeFileType(filepath.Ext(req.FileName))
 	}
 
 	switch {
 	case ft == "md" || ft == "markdown":
 		return &types.ReadResult{MarkdownContent: string(req.FileContent)}, nil
-	case ft == "txt" || ft == "text":
+	case ft == "txt" || ft == "text" || ft == "log" ||
+		ft == "html" || ft == "htm" ||
+		ft == "xml" || ft == "yaml" || ft == "yml":
 		return &types.ReadResult{MarkdownContent: string(req.FileContent)}, nil
 	case ft == "csv":
 		md, err := csvToMarkdown(req.FileContent)
@@ -105,12 +159,12 @@ func imageToResult(fileName string, data []byte) *types.ReadResult {
 
 // IsImageFormat returns true if the file type is a recognized image format.
 func IsImageFormat(fileType string) bool {
-	return imageFormats[strings.ToLower(strings.TrimPrefix(fileType, "."))]
+	return imageFormats[NormalizeFileType(fileType)]
 }
 
 // IsAudioFormat returns true if the file type is a recognized audio format.
 func IsAudioFormat(fileType string) bool {
-	return audioFormats[strings.ToLower(strings.TrimPrefix(fileType, "."))]
+	return audioFormats[NormalizeFileType(fileType)]
 }
 
 // audioToResult wraps a standalone audio file. The actual transcription is

@@ -15,6 +15,37 @@ logger = logging.getLogger(__name__)
 
 BUILTIN_ENGINE = "builtin"
 
+MIME_FILE_TYPES = {
+    "application/pdf": "pdf",
+    "text/plain": "txt",
+    "text/markdown": "md",
+    "text/csv": "csv",
+    "application/json": "json",
+    "text/json": "json",
+    "text/html": "html",
+    "application/xml": "xml",
+    "text/xml": "xml",
+    "application/msword": "doc",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+    "application/vnd.ms-excel": "xls",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+    "application/vnd.ms-powerpoint": "ppt",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+    "image/jpeg": "jpeg",
+    "image/png": "png",
+    "image/gif": "gif",
+    "image/bmp": "bmp",
+    "image/tiff": "tiff",
+    "image/webp": "webp",
+}
+
+
+def normalize_file_type(file_type: str) -> str:
+    ft = (file_type or "").strip().lower()
+    if ";" in ft:
+        ft = ft.split(";", 1)[0].strip()
+    return MIME_FILE_TYPES.get(ft, ft.lstrip("."))
+
 
 class ParserEngineRegistry:
     """Registry for parser engines.
@@ -55,7 +86,7 @@ class ParserEngineRegistry:
         Falls back to builtin engine when the requested engine doesn't
         support the file type.
         """
-        ft = file_type.lower()
+        ft = normalize_file_type(file_type)
 
         if engine and engine in self._engines:
             cls = self._engines[engine].get(ft)

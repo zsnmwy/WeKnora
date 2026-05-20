@@ -506,13 +506,13 @@ func TestJsonToMarkdown_RealisticLargeNestedConfig(t *testing.T) {
 	rules := make(map[string]interface{})
 	for i := 0; i < 30; i++ {
 		rules[fmt.Sprintf("rule_%02d", i)] = map[string]interface{}{
-			"pattern": strings.Repeat("pattern", 10),
-			"action":  "allow",
+			"pattern":  strings.Repeat("pattern", 10),
+			"action":   "allow",
 			"priority": i,
 		}
 	}
 	config := map[string]interface{}{
-		"version": "3.0",
+		"version":  "3.0",
 		"metadata": map[string]interface{}{"author": "admin", "updated": "2026-03-24"},
 		"firewall": map[string]interface{}{
 			"enabled": true,
@@ -564,6 +564,25 @@ func TestSimpleFormatReader_JSON(t *testing.T) {
 	})
 }
 
+func TestSimpleFormatReader_JSONWithDottedFileType(t *testing.T) {
+	reader := &SimpleFormatReader{}
+	input := `{"test": "dotted-extension"}`
+	req := &types.ReadRequest{
+		FileName:    "config.json",
+		FileType:    ".json",
+		FileContent: []byte(input),
+	}
+
+	result, err := reader.Read(context.Background(), req)
+
+	if err != nil {
+		t.Fatalf("Read() returned error: %v", err)
+	}
+	if result == nil || !strings.Contains(result.MarkdownContent, "dotted-extension") {
+		t.Fatalf("Read() did not parse dotted file type, result=%#v", result)
+	}
+}
+
 func TestSimpleFormatReader_JSON_Invalid(t *testing.T) {
 	reader := &SimpleFormatReader{}
 	req := &types.ReadRequest{
@@ -580,14 +599,38 @@ func TestSimpleFormatReader_JSON_Invalid(t *testing.T) {
 	})
 }
 
+func TestNormalizeFileType(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{".PDF", "pdf"},
+		{" pdf ", "pdf"},
+		{"application/pdf", "pdf"},
+		{"application/json; charset=utf-8", "json"},
+		{"text/markdown", "md"},
+		{"text/html", "html"},
+		{"application/x-yaml", "yaml"},
+		{"application/vnd.openxmlformats-officedocument.wordprocessingml.document", "docx"},
+		{"", ""},
+	}
+
+	for _, tc := range cases {
+		if got := NormalizeFileType(tc.input); got != tc.want {
+			t.Errorf("NormalizeFileType(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}
+
 func TestIsSimpleFormat_JSON(t *testing.T) {
 	cases := []struct {
 		input string
 		want  bool
 	}{
-		{"json", true}, {"JSON", true}, {".json", true}, {"Json", true},
-		{"txt", true}, {"csv", true},
-		{"pdf", false}, {"docx", false},
+		{"json", true}, {"JSON", true}, {".json", true}, {" Json ", true},
+		{"application/json", true}, {"text/markdown", true}, {"text/html", true},
+		{"txt", true}, {"csv", true}, {"yaml", true}, {"log", true},
+		{"pdf", false}, {".pdf", false}, {"docx", false},
 	}
 
 	t.Logf("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
