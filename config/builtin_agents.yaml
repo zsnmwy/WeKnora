@@ -74,6 +74,9 @@ builtin_agents:
       max_iterations: 50
       kb_selection_mode: "all"
       retrieve_kb_only_when_mentioned: false
+      mcp_selection_mode: "selected"
+      mcp_services:
+        - "builtin-mcp-jisutong-product-info"
       allowed_tools:
         - "knowledge_search"
         - "grep_chunks"
@@ -232,4 +235,3 @@ builtin_agents:
       vector_threshold: 0.5
       rerank_top_k: 10
       rerank_threshold: 0.3
-
